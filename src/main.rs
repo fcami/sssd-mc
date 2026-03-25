@@ -113,7 +113,7 @@ fn print_passwd_record(slot: u32, rec: &McRec, data: &[u8], expired: bool) {
         return;
     }
     let strings = extract_strings(&data[strs_start..strs_end]);
-    let name = strings.first().copied().unwrap_or("<unknown>");
+    let name = strings.first().map(|s| s.as_str()).unwrap_or("<unknown>");
     let expired_tag = if expired { " [EXPIRED]" } else { "" };
     println!("  [slot {slot:>5}] {name} uid={} gid={} expire={}{expired_tag}",
              pwd.uid, pwd.gid, rec.expire);
@@ -135,12 +135,12 @@ fn print_group_record(slot: u32, rec: &McRec, data: &[u8], expired: bool) {
         return;
     }
     let strings = extract_strings(&data[strs_start..strs_end]);
-    let name = strings.first().copied().unwrap_or("<unknown>");
+    let name = strings.first().map(|s| s.as_str()).unwrap_or("<unknown>");
     let expired_tag = if expired { " [EXPIRED]" } else { "" };
     println!("  [slot {slot:>5}] {name} gid={} members={} expire={}{expired_tag}",
              grp.gid, grp.members, rec.expire);
     if strings.len() > 2 {
-        let members: Vec<&str> = strings[2..].to_vec();
+        let members: Vec<&str> = strings[2..].iter().map(|s| s.as_str()).collect();
         println!("              members: {}", members.join(", "));
     }
 }
@@ -169,7 +169,7 @@ fn print_initgr_record(slot: u32, rec: &McRec, data: &[u8], expired: bool) {
     let strs_offset = initgr.strs as usize;
     let name = if strs_offset < data.len() {
         let strs = extract_strings(&data[strs_offset..]);
-        strs.first().copied().unwrap_or("<unknown>").to_string()
+        strs.first().cloned().unwrap_or_else(|| "<unknown>".to_string())
     } else {
         "<unknown>".to_string()
     };

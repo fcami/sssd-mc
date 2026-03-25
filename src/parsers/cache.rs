@@ -245,16 +245,15 @@ fn validate_header(header: &McHeader, file_size: usize) -> McResult<()> {
 }
 
 /// Extract null-terminated strings from a string buffer.
-pub fn extract_strings(buf: &[u8]) -> Vec<&str> {
-    let mut strings = Vec::new();
-    for part in buf.split(|&b| b == 0) {
-        if !part.is_empty() {
-            if let Ok(s) = std::str::from_utf8(part) {
-                strings.push(s);
-            }
-        }
-    }
-    strings
+///
+/// Uses lossy UTF-8 conversion so that non-UTF-8 data (e.g. legacy
+/// encodings, CJK, IDN) is preserved with replacement characters
+/// rather than silently dropped.
+pub fn extract_strings(buf: &[u8]) -> Vec<String> {
+    buf.split(|&b| b == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect()
 }
 
 #[cfg(test)]
@@ -265,7 +264,7 @@ mod tests {
     fn extract_strings_basic() {
         let buf = b"hello\0world\0";
         let strs = extract_strings(buf);
-        assert_eq!(strs, vec!["hello", "world"]);
+        assert_eq!(strs, &["hello", "world"]);
     }
 
     #[test]
@@ -277,14 +276,25 @@ mod tests {
     #[test]
     fn extract_strings_single() {
         let strs = extract_strings(b"root\0");
-        assert_eq!(strs, vec!["root"]);
+        assert_eq!(strs, &["root"]);
     }
 
     #[test]
     fn extract_strings_passwd() {
         let buf = b"root\0x\0root\0/root\0/bin/bash\0";
         let strs = extract_strings(buf);
-        assert_eq!(strs, vec!["root", "x", "root", "/root", "/bin/bash"]);
+        assert_eq!(strs, &["root", "x", "root", "/root", "/bin/bash"]);
+    }
+
+    #[test]
+    fn extract_strings_non_utf8() {
+        // Latin-1 "café" where é is 0xe9 (not valid UTF-8)
+        let buf = b"caf\xe9\0normal\0";
+        let strs = extract_strings(buf);
+        assert_eq!(strs.len(), 2);
+        assert!(strs[0].contains("caf"), "should preserve prefix");
+        assert!(strs[0].contains('\u{FFFD}'), "should have replacement char");
+        assert_eq!(strs[1], "normal");
     }
 
     #[test]
