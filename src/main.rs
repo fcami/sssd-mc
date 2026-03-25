@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -72,65 +73,67 @@ fn now_epoch() -> u64 {
         .as_secs()
 }
 
-fn dump_records(cache: &CacheFile, now: u64) {
+fn dump_records(w: &mut impl Write, cache: &CacheFile, now: u64) -> io::Result<()> {
     for (slot, rec) in cache.iter_records() {
         match cache.parse_entry(slot, &rec) {
-            Ok(CacheEntry::Passwd(ref e)) => display::print_passwd(slot, e, now),
-            Ok(CacheEntry::Group(ref e)) => display::print_group(slot, e, now),
-            Ok(CacheEntry::Initgr(ref e)) => display::print_initgr(slot, e, now),
-            Ok(CacheEntry::Sid(ref e)) => display::print_sid(slot, e, now),
+            Ok(CacheEntry::Passwd(ref e)) => display::write_passwd(w, slot, e, now)?,
+            Ok(CacheEntry::Group(ref e)) => display::write_group(w, slot, e, now)?,
+            Ok(CacheEntry::Initgr(ref e)) => display::write_initgr(w, slot, e, now)?,
+            Ok(CacheEntry::Sid(ref e)) => display::write_sid(w, slot, e, now)?,
             Err(e) => eprintln!("  [slot {slot}] error: {e}"),
         }
     }
+    Ok(())
 }
 
 fn run() -> McResult<()> {
     let cli = Cli::parse();
     let now = now_epoch();
+    let mut out = io::stdout().lock();
 
     match cli.command {
         Commands::Header { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
-            display::print_header(&cache);
+            display::write_header(&mut out, &cache).ok();
         }
         Commands::Dump { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
-            display::print_header(&cache);
-            println!();
-            println!("Records:");
-            dump_records(&cache, now);
+            display::write_header(&mut out, &cache).ok();
+            writeln!(out).ok();
+            writeln!(out, "Records:").ok();
+            dump_records(&mut out, &cache, now).ok();
         }
         Commands::Stats { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
-            display::print_stats(&cache, now);
+            display::write_stats(&mut out, &cache, now).ok();
         }
         Commands::Verify { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
             let result = analysis::verify_cache(&cache);
 
-            println!("Cache type:         {}", cache.cache_type);
-            println!("Total records:      {}", result.total_records);
-            println!("Same-bucket hashes: {}", result.same_bucket_count);
-            println!("Unreachable (hash2):{}", result.unreachable_count);
-            println!("Hash mismatches:    {}", result.hash_mismatch_count);
-            println!("Max chain length:   {}", result.max_chain_length);
-            println!();
+            writeln!(out, "Cache type:         {}", cache.cache_type).ok();
+            writeln!(out, "Total records:      {}", result.total_records).ok();
+            writeln!(out, "Same-bucket hashes: {}", result.same_bucket_count).ok();
+            writeln!(out, "Unreachable (hash2):{}", result.unreachable_count).ok();
+            writeln!(out, "Hash mismatches:    {}", result.hash_mismatch_count).ok();
+            writeln!(out, "Max chain length:   {}", result.max_chain_length).ok();
+            writeln!(out).ok();
 
             if result.problems.is_empty() {
-                println!("No problems found.");
+                writeln!(out, "No problems found.").ok();
             } else {
-                println!("Problems:");
+                writeln!(out, "Problems:").ok();
                 for problem in &result.problems {
-                    println!("  {problem}");
+                    writeln!(out, "  {problem}").ok();
                 }
-                println!();
+                writeln!(out).ok();
                 if result.unreachable_count > 0 {
-                    println!("CRITICAL: {} record(s) unreachable by UID/GID lookup.",
-                             result.unreachable_count);
-                    println!("This is a known SSSD defect where hash1 and hash2 collide");
-                    println!("into the same bucket. Affected users/groups will fail");
-                    println!("getpwuid()/getgrgid() while getpwnam()/getgrnam() works.");
-                    println!("Workaround: sss_cache -E (flush all caches)");
+                    writeln!(out, "CRITICAL: {} record(s) unreachable by UID/GID lookup.",
+                             result.unreachable_count).ok();
+                    writeln!(out, "This is a known SSSD defect where hash1 and hash2 collide").ok();
+                    writeln!(out, "into the same bucket. Affected users/groups will fail").ok();
+                    writeln!(out, "getpwuid()/getgrgid() while getpwnam()/getgrnam() works.").ok();
+                    writeln!(out, "Workaround: sss_cache -E (flush all caches)").ok();
                 }
             }
         }
