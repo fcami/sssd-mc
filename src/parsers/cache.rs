@@ -12,6 +12,7 @@ use crate::errors::{McError, McResult};
 use crate::types::*;
 
 /// Validated, read-only view of an SSSD memory cache file.
+#[derive(Debug)]
 pub struct CacheFile {
     mmap: Mmap,
     pub header: McHeader,
