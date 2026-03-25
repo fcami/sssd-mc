@@ -41,6 +41,12 @@ pub enum CacheProblem {
         bucket: u32,
         length: u32,
     },
+
+    /// Record's stored hash doesn't match recomputed hash from its data.
+    HashMismatch {
+        slot: u32,
+        which: &'static str,
+    },
 }
 
 impl std::fmt::Display for CacheProblem {
@@ -62,6 +68,10 @@ impl std::fmt::Display for CacheProblem {
             Self::LongChain { bucket, length } => {
                 write!(f, "INFO: bucket {bucket} has chain length {length}")
             }
+            Self::HashMismatch { slot, which } => {
+                write!(f, "ERROR: record at slot {slot} has {which} mismatch \
+                       (stored hash doesn't match recomputed hash from data)")
+            }
         }
     }
 }
@@ -73,6 +83,7 @@ pub struct VerifyResult {
     pub total_records: u32,
     pub same_bucket_count: u32,
     pub unreachable_count: u32,
+    pub hash_mismatch_count: u32,
     pub max_chain_length: u32,
 }
 
@@ -199,6 +210,24 @@ pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
                 hash2: rec.hash2,
                 bucket: bucket2,
             });
+        }
+
+        // Hash value integrity check (passwd and group only)
+        if let Some((h1_ok, h2_ok)) = verify_record_hashes(cache, slot, &rec) {
+            if !h1_ok {
+                result.hash_mismatch_count += 1;
+                result.problems.push(CacheProblem::HashMismatch {
+                    slot,
+                    which: "hash1 (name)",
+                });
+            }
+            if !h2_ok {
+                result.hash_mismatch_count += 1;
+                result.problems.push(CacheProblem::HashMismatch {
+                    slot,
+                    which: "hash2 (id)",
+                });
+            }
         }
     }
 

@@ -131,6 +131,7 @@ fn run() -> McResult<()> {
             println!("Total records:      {}", result.total_records);
             println!("Same-bucket hashes: {}", result.same_bucket_count);
             println!("Unreachable (hash2):{}", result.unreachable_count);
+            println!("Hash mismatches:    {}", result.hash_mismatch_count);
             println!("Max chain length:   {}", result.max_chain_length);
             println!();
 
