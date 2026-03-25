@@ -25,12 +25,15 @@ pub enum CacheProblem {
     },
 
     /// Record's hash1 and hash2 resolve to the same bucket.
-    /// This is a precondition for the unreachability bug.
+    /// When hashes are identical this is harmless; when different
+    /// it's the precondition for the unreachability bug.
     SameBucketHashes {
         slot: u32,
         hash1: u32,
         hash2: u32,
         bucket: u32,
+        /// True when hash1 == hash2 (identical, harmless).
+        identical: bool,
     },
 
     /// Record has inconsistent barriers.
@@ -69,9 +72,15 @@ impl std::fmt::Display for CacheProblem {
                        (hash1={hash1:#x} hash2={hash2:#x} bucket={bucket}) — \
                        UID/GID lookup will fail")
             }
-            Self::SameBucketHashes { slot, hash1, hash2, bucket } => {
-                write!(f, "WARNING: record at slot {slot} has hash1={hash1:#x} and \
-                       hash2={hash2:#x} both mapping to bucket {bucket}")
+            Self::SameBucketHashes { slot, hash1, hash2, bucket, identical } => {
+                if *identical {
+                    write!(f, "INFO: record at slot {slot} has identical hash1=hash2={hash1:#x} \
+                           (bucket {bucket}) — harmless, lookups use same chain")
+                } else {
+                    write!(f, "WARNING: record at slot {slot} has hash1={hash1:#x} and \
+                           hash2={hash2:#x} both mapping to bucket {bucket} — \
+                           at risk if pushed down chain by later insert")
+                }
             }
             Self::BarrierMismatch { slot, b1, b2 } => {
                 write!(f, "ERROR: record at slot {slot} has barrier mismatch \
@@ -203,6 +212,7 @@ pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
                 hash1: rec.hash1,
                 hash2: rec.hash2,
                 bucket: bucket1,
+                identical: rec.hash1 == rec.hash2,
             });
         }
 
@@ -382,10 +392,17 @@ mod tests {
     #[test]
     fn problem_same_bucket_display() {
         let p = CacheProblem::SameBucketHashes {
-            slot: 2, hash1: 0x40, hash2: 0x40, bucket: 0,
+            slot: 2, hash1: 0x40, hash2: 0x40, bucket: 0, identical: true,
         };
         let msg = format!("{p}");
-        assert!(msg.contains("WARNING"));
-        assert!(msg.contains("bucket 0"));
+        assert!(msg.contains("INFO"));
+        assert!(msg.contains("harmless"));
+
+        let p2 = CacheProblem::SameBucketHashes {
+            slot: 3, hash1: 0x40, hash2: 0x80, bucket: 0, identical: false,
+        };
+        let msg2 = format!("{p2}");
+        assert!(msg2.contains("WARNING"));
+        assert!(msg2.contains("at risk"));
     }
 }

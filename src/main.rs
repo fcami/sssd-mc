@@ -48,7 +48,7 @@ enum Commands {
         #[arg(short, long, value_parser = parse_cache_type)]
         r#type: CacheType,
     },
-    /// Look up a record by name or ID (mimics SSSD's NSS client lookup)
+    /// Look up a record by name, ID, or slot number
     Lookup {
         /// Path to the cache file
         path: PathBuf,
@@ -57,6 +57,9 @@ enum Commands {
         r#type: CacheType,
         /// Key to look up (name or numeric ID)
         key: String,
+        /// Treat key as a slot number instead of a name/ID
+        #[arg(long)]
+        slot: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -131,11 +134,20 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 dump_records(&mut out, &cache, now).ok();
             }
         }
-        Commands::Lookup { path, r#type, key, json } => {
+        Commands::Lookup { path, r#type, key, slot: by_slot, json } => {
             let cache = CacheFile::open(&path, r#type)?;
-            // Try name lookup (hash1) first, then ID lookup (hash2)
-            let result = cache.lookup(&key, false)?
-                .or(cache.lookup(&key, true)?);
+
+            let result = if by_slot {
+                let slot_num: u32 = key.parse().map_err(|_| {
+                    sssd_mc::errors::McError::OutOfBounds { offset: 0, size: 0 }
+                })?;
+                let rec = cache.read_rec(slot_num)?;
+                cache.parse_entry(slot_num, &rec).ok().map(|e| (slot_num, e))
+            } else {
+                // Try name lookup (hash1) first, then ID lookup (hash2)
+                cache.lookup(&key, false)?
+                    .or(cache.lookup(&key, true)?)
+            };
 
             match result {
                 Some((slot, entry)) => {
