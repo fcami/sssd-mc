@@ -48,6 +48,19 @@ enum Commands {
         #[arg(short, long, value_parser = parse_cache_type)]
         r#type: CacheType,
     },
+    /// Look up a record by name or ID (mimics SSSD's NSS client lookup)
+    Lookup {
+        /// Path to the cache file
+        path: PathBuf,
+        /// Cache type
+        #[arg(short, long, value_parser = parse_cache_type)]
+        r#type: CacheType,
+        /// Key to look up (name or numeric ID)
+        key: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify cache integrity (detect hash collisions and unreachable records)
     Verify {
         /// Path to the cache file
@@ -116,6 +129,32 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 writeln!(out).ok();
                 writeln!(out, "Records:").ok();
                 dump_records(&mut out, &cache, now).ok();
+            }
+        }
+        Commands::Lookup { path, r#type, key, json } => {
+            let cache = CacheFile::open(&path, r#type)?;
+            // Try name lookup (hash1) first, then ID lookup (hash2)
+            let result = cache.lookup(&key, false)?
+                .or(cache.lookup(&key, true)?);
+
+            match result {
+                Some((slot, entry)) => {
+                    if json {
+                        serde_json::to_writer_pretty(&mut out, &entry).ok();
+                        writeln!(out).ok();
+                    } else {
+                        match &entry {
+                            CacheEntry::Passwd(e) => display::write_passwd(&mut out, slot, e, now).ok(),
+                            CacheEntry::Group(e) => display::write_group(&mut out, slot, e, now).ok(),
+                            CacheEntry::Initgr(e) => display::write_initgr(&mut out, slot, e, now).ok(),
+                            CacheEntry::Sid(e) => display::write_sid(&mut out, slot, e, now).ok(),
+                        };
+                    }
+                }
+                None => {
+                    eprintln!("Not found: {key}");
+                    return Ok(true); // exit non-zero
+                }
             }
         }
         Commands::Stats { path, r#type } => {

@@ -11,6 +11,7 @@ use memmap2::Mmap;
 use crate::entries;
 use crate::entries::*;
 use crate::errors::{McError, McResult};
+use crate::murmurhash3::murmurhash3;
 use crate::types::*;
 
 /// Validated, read-only view of an SSSD memory cache file.
@@ -153,6 +154,73 @@ impl CacheFile {
     /// Total number of slots in the data table.
     pub fn total_slots(&self) -> u32 {
         self.header.dt_size / MC_SLOT_SIZE
+    }
+
+    /// Look up a record by key string via hash table walk.
+    ///
+    /// The key is hashed with the cache's seed, and the hash table chain
+    /// is walked looking for a matching record. This mimics SSSD's NSS
+    /// client lookup (getpwnam, getgrnam, etc).
+    ///
+    /// `use_hash2` controls whether to search via hash1 (name lookup)
+    /// or hash2 (ID lookup).
+    pub fn lookup(&self, key: &str, use_hash2: bool) -> McResult<Option<(u32, CacheEntry)>> {
+        // SSSD hashes include the null terminator
+        let mut key_bytes = key.as_bytes().to_vec();
+        key_bytes.push(0);
+
+        let hash = murmurhash3(&key_bytes, self.seed()) % self.ht_entries();
+        let mut slot = self.ht_entry(hash)?;
+
+        let mut visited = 0u32;
+        let max = self.total_slots();
+
+        while slot != MC_INVALID_VAL32 && visited < max {
+            let rec = self.read_rec(slot)?;
+
+            let hash_matches = if use_hash2 {
+                rec.hash2 == hash
+            } else {
+                rec.hash1 == hash
+            };
+
+            if hash_matches {
+                if let Ok(entry) = self.parse_entry(slot, &rec) {
+                    // Verify the key actually matches (not just hash)
+                    let name_matches = match &entry {
+                        CacheEntry::Passwd(e) => {
+                            if use_hash2 { format!("{}", e.uid) == key }
+                            else { e.name == key }
+                        }
+                        CacheEntry::Group(e) => {
+                            if use_hash2 { format!("{}", e.gid) == key }
+                            else { e.name == key }
+                        }
+                        CacheEntry::Initgr(e) => e.name == key || e.unique_name == key,
+                        CacheEntry::Sid(e) => {
+                            if use_hash2 { format!("{}", e.id) == key }
+                            else { e.sid == key }
+                        }
+                    };
+
+                    if name_matches {
+                        return Ok(Some((slot, entry)));
+                    }
+                }
+            }
+
+            // Follow chain
+            if rec.hash1 == hash {
+                slot = rec.next1;
+            } else if rec.hash2 == hash {
+                slot = rec.next2;
+            } else {
+                break;
+            }
+            visited += 1;
+        }
+
+        Ok(None)
     }
 
     /// Parse a record at the given slot into a typed entry.
