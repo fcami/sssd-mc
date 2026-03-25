@@ -2,10 +2,15 @@
 //!
 //! Separated from parsing so that library consumers can use the
 //! parsed types without pulling in display logic.
+//! Expiry is computed here (display concern), not in parsed types.
 
 use crate::entries::*;
 use crate::parsers::cache::CacheFile;
 use crate::types::*;
+
+fn expired_tag(expire: u64, now: u64) -> &'static str {
+    if expire < now { " [EXPIRED]" } else { "" }
+}
 
 pub fn print_header(cache: &CacheFile) {
     let h = &cache.header;
@@ -27,16 +32,16 @@ pub fn print_header(cache: &CacheFile) {
     println!("Total slots:    {}", cache.total_slots());
 }
 
-pub fn print_passwd(slot: u32, entry: &PasswdEntry) {
-    let tag = if entry.expired { " [EXPIRED]" } else { "" };
+pub fn print_passwd(slot: u32, entry: &PasswdEntry, now: u64) {
+    let tag = expired_tag(entry.expire, now);
     println!("  [slot {slot:>5}] {} uid={} gid={} expire={}{tag}",
              entry.name, entry.uid, entry.gid, entry.expire);
     println!("              gecos={} dir={} shell={}",
              entry.gecos, entry.dir, entry.shell);
 }
 
-pub fn print_group(slot: u32, entry: &GroupEntry) {
-    let tag = if entry.expired { " [EXPIRED]" } else { "" };
+pub fn print_group(slot: u32, entry: &GroupEntry, now: u64) {
+    let tag = expired_tag(entry.expire, now);
     println!("  [slot {slot:>5}] {} gid={} members={} expire={}{tag}",
              entry.name, entry.gid, entry.members.len(), entry.expire);
     if !entry.members.is_empty() {
@@ -44,8 +49,8 @@ pub fn print_group(slot: u32, entry: &GroupEntry) {
     }
 }
 
-pub fn print_initgr(slot: u32, entry: &InitgrEntry) {
-    let tag = if entry.expired { " [EXPIRED]" } else { "" };
+pub fn print_initgr(slot: u32, entry: &InitgrEntry, now: u64) {
+    let tag = expired_tag(entry.expire, now);
     println!("  [slot {slot:>5}] {} num_groups={} expire={}{tag}",
              entry.name, entry.gids.len(), entry.expire);
     if !entry.gids.is_empty() {
@@ -54,8 +59,8 @@ pub fn print_initgr(slot: u32, entry: &InitgrEntry) {
     }
 }
 
-pub fn print_sid(slot: u32, entry: &SidEntry) {
-    let tag = if entry.expired { " [EXPIRED]" } else { "" };
+pub fn print_sid(slot: u32, entry: &SidEntry, now: u64) {
+    let tag = expired_tag(entry.expire, now);
     println!("  [slot {slot:>5}] {} id={} type={} populated_by={} expire={}{tag}",
              entry.sid, entry.id, entry.id_type, entry.populated_by, entry.expire);
 }

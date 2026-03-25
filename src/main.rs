@@ -74,11 +74,11 @@ fn now_epoch() -> u64 {
 
 fn dump_records(cache: &CacheFile, now: u64) {
     for (slot, rec) in cache.iter_records() {
-        match cache.parse_entry(slot, &rec, now) {
-            Ok(CacheEntry::Passwd(ref e)) => display::print_passwd(slot, e),
-            Ok(CacheEntry::Group(ref e)) => display::print_group(slot, e),
-            Ok(CacheEntry::Initgr(ref e)) => display::print_initgr(slot, e),
-            Ok(CacheEntry::Sid(ref e)) => display::print_sid(slot, e),
+        match cache.parse_entry(slot, &rec) {
+            Ok(CacheEntry::Passwd(ref e)) => display::print_passwd(slot, e, now),
+            Ok(CacheEntry::Group(ref e)) => display::print_group(slot, e, now),
+            Ok(CacheEntry::Initgr(ref e)) => display::print_initgr(slot, e, now),
+            Ok(CacheEntry::Sid(ref e)) => display::print_sid(slot, e, now),
             Err(e) => eprintln!("  [slot {slot}] error: {e}"),
         }
     }

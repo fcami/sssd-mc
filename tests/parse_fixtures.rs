@@ -8,8 +8,6 @@ use sssd_mc::entries::*;
 use sssd_mc::parsers::cache::CacheFile;
 use sssd_mc::types::*;
 
-const FAR_FUTURE: u64 = u64::MAX;
-
 fn fixtures_dir(version: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -29,7 +27,7 @@ fn passwd_entries(version: &str) -> Vec<(u32, PasswdEntry)> {
     let cache = open_passwd(version);
     cache.iter_records()
         .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec, FAR_FUTURE) {
+            match cache.parse_entry(slot, &rec) {
                 Ok(CacheEntry::Passwd(e)) => Some((slot, e)),
                 _ => None,
             }
@@ -81,12 +79,11 @@ fn passwd_head_expired_entry() {
     let cache = open_passwd("head");
     let records: Vec<_> = cache.iter_records().collect();
     let (slot, rec) = &records[2];
-    let entry = cache.parse_entry(*slot, rec, FAR_FUTURE).unwrap();
+    let entry = cache.parse_entry(*slot, rec).unwrap();
     if let CacheEntry::Passwd(e) = entry {
         assert_eq!(e.name, "expired");
-        // expire=1000000000, which is < FAR_FUTURE, so expired=true only if now > expire
-        // With now=FAR_FUTURE, expired=true
-        assert!(e.expired);
+        // expire=1000000000 (2001-09-08), definitely in the past
+        assert!(e.expire < 2_000_000_000);
     } else {
         panic!("Expected passwd entry");
     }
@@ -121,7 +118,7 @@ fn group_entries(version: &str) -> Vec<(u32, GroupEntry)> {
     let cache = open_group(version);
     cache.iter_records()
         .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec, FAR_FUTURE) {
+            match cache.parse_entry(slot, &rec) {
                 Ok(CacheEntry::Group(e)) => Some((slot, e)),
                 _ => None,
             }
@@ -166,7 +163,7 @@ fn initgr_entries(version: &str) -> Vec<(u32, InitgrEntry)> {
     let cache = open_initgroups(version);
     cache.iter_records()
         .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec, FAR_FUTURE) {
+            match cache.parse_entry(slot, &rec) {
                 Ok(CacheEntry::Initgr(e)) => Some((slot, e)),
                 _ => None,
             }
@@ -200,7 +197,7 @@ fn initgr_head_admin_three_groups() {
 fn initgr_head_expired_entry() {
     let entries = initgr_entries("head");
     let (_, ref old) = entries[2];
-    assert!(old.expired);
+    assert!(old.expire < 2_000_000_000);
 }
 
 // ---- sid cache tests ----
@@ -215,7 +212,7 @@ fn sid_entries(version: &str) -> Vec<(u32, SidEntry)> {
     let cache = open_sid(version);
     cache.iter_records()
         .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec, FAR_FUTURE) {
+            match cache.parse_entry(slot, &rec) {
                 Ok(CacheEntry::Sid(e)) => Some((slot, e)),
                 _ => None,
             }
@@ -252,7 +249,7 @@ fn sid_head_group_sid() {
 fn sid_head_expired_entry() {
     let entries = sid_entries("head");
     let (_, ref sid) = entries[2];
-    assert!(sid.expired);
+    assert!(sid.expire < 2_000_000_000);
 }
 
 // ---- hash lookup tests ----
@@ -266,7 +263,7 @@ fn passwd_head_hash_lookup_root() {
     assert_ne!(slot, MC_INVALID_VAL32);
 
     let rec = cache.read_rec(slot).expect("valid record");
-    let entry = cache.parse_entry(slot, &rec, FAR_FUTURE).unwrap();
+    let entry = cache.parse_entry(slot, &rec).unwrap();
     if let CacheEntry::Passwd(e) = entry {
         assert_eq!(e.uid, 0, "Hash lookup for root should find uid=0");
     } else {
@@ -285,7 +282,7 @@ fn passwd_head_hash_lookup_by_uid() {
     while slot != MC_INVALID_VAL32 {
         let rec = cache.read_rec(slot).expect("valid record");
         if rec.hash2 == hash {
-            let entry = cache.parse_entry(slot, &rec, FAR_FUTURE).unwrap();
+            let entry = cache.parse_entry(slot, &rec).unwrap();
             if let CacheEntry::Passwd(e) = entry {
                 assert_eq!(e.uid, 1000);
                 found = true;

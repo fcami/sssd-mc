@@ -17,7 +17,6 @@ pub struct PasswdEntry {
     pub dir: String,
     pub shell: String,
     pub expire: u64,
-    pub expired: bool,
 }
 
 /// A parsed group cache entry.
@@ -28,7 +27,6 @@ pub struct GroupEntry {
     pub gid: u32,
     pub members: Vec<String>,
     pub expire: u64,
-    pub expired: bool,
 }
 
 /// A parsed initgroups cache entry.
@@ -38,7 +36,6 @@ pub struct InitgrEntry {
     pub unique_name: String,
     pub gids: Vec<u32>,
     pub expire: u64,
-    pub expired: bool,
 }
 
 /// A parsed SID cache entry.
@@ -49,7 +46,6 @@ pub struct SidEntry {
     pub id_type: u32,
     pub populated_by: u32,
     pub expire: u64,
-    pub expired: bool,
 }
 
 /// A typed cache entry (any of the four types).
@@ -62,7 +58,7 @@ pub enum CacheEntry {
 }
 
 /// Parse a passwd entry from raw record data.
-pub fn parse_passwd(rec: &McRec, data: &[u8], now: u64) -> McResult<PasswdEntry> {
+pub fn parse_passwd(rec: &McRec, data: &[u8]) -> McResult<PasswdEntry> {
     if data.len() < std::mem::size_of::<McPwdData>() {
         return Err(McError::InvalidRecordLength {
             slot: 0,
@@ -91,12 +87,11 @@ pub fn parse_passwd(rec: &McRec, data: &[u8], now: u64) -> McResult<PasswdEntry>
         dir: strings.get(3).cloned().unwrap_or_default(),
         shell: strings.get(4).cloned().unwrap_or_default(),
         expire: rec.expire,
-        expired: rec.expire < now,
     })
 }
 
 /// Parse a group entry from raw record data.
-pub fn parse_group(rec: &McRec, data: &[u8], now: u64) -> McResult<GroupEntry> {
+pub fn parse_group(rec: &McRec, data: &[u8]) -> McResult<GroupEntry> {
     if data.len() < std::mem::size_of::<McGrpData>() {
         return Err(McError::InvalidRecordLength {
             slot: 0,
@@ -122,12 +117,11 @@ pub fn parse_group(rec: &McRec, data: &[u8], now: u64) -> McResult<GroupEntry> {
         gid: grp.gid,
         members: strings.get(2..).map(|s| s.to_vec()).unwrap_or_default(),
         expire: rec.expire,
-        expired: rec.expire < now,
     })
 }
 
 /// Parse an initgroups entry from raw record data.
-pub fn parse_initgr(rec: &McRec, data: &[u8], now: u64) -> McResult<InitgrEntry> {
+pub fn parse_initgr(rec: &McRec, data: &[u8]) -> McResult<InitgrEntry> {
     if data.len() < std::mem::size_of::<McInitgrData>() {
         return Err(McError::InvalidRecordLength {
             slot: 0,
@@ -162,12 +156,11 @@ pub fn parse_initgr(rec: &McRec, data: &[u8], now: u64) -> McResult<InitgrEntry>
         unique_name: strings.get(1).cloned().unwrap_or_default(),
         gids,
         expire: rec.expire,
-        expired: rec.expire < now,
     })
 }
 
 /// Parse a SID entry from raw record data.
-pub fn parse_sid(rec: &McRec, data: &[u8], now: u64) -> McResult<SidEntry> {
+pub fn parse_sid(rec: &McRec, data: &[u8]) -> McResult<SidEntry> {
     if data.len() < std::mem::size_of::<McSidData>() {
         return Err(McError::InvalidRecordLength {
             slot: 0,
@@ -192,7 +185,6 @@ pub fn parse_sid(rec: &McRec, data: &[u8], now: u64) -> McResult<SidEntry> {
         id_type: sid.id_type,
         populated_by: sid.populated_by,
         expire: rec.expire,
-        expired: rec.expire < now,
     })
 }
 
@@ -225,15 +217,15 @@ mod tests {
         data[std::mem::size_of::<McPwdData>()..].copy_from_slice(strs);
 
         let rec = make_rec(u64::MAX);
-        let entry = parse_passwd(&rec, &data, 1000).unwrap();
+        let entry = parse_passwd(&rec, &data).unwrap();
         assert_eq!(entry.name, "root");
         assert_eq!(entry.uid, 0);
         assert_eq!(entry.shell, "/bin/bash");
-        assert!(!entry.expired);
+        assert_eq!(entry.expire, u64::MAX);
     }
 
     #[test]
-    fn parse_passwd_expired() {
+    fn parse_passwd_expire_preserved() {
         let strs = b"old\0x\0old\0/home/old\0/bin/sh\0";
         let pwd = McPwdData {
             name: std::mem::size_of::<McPwdData>() as u32,
@@ -244,15 +236,15 @@ mod tests {
         unsafe { std::ptr::write_unaligned(data.as_mut_ptr().cast(), pwd); }
         data[std::mem::size_of::<McPwdData>()..].copy_from_slice(strs);
 
-        let rec = make_rec(500); // expire in the past
-        let entry = parse_passwd(&rec, &data, 1000).unwrap();
-        assert!(entry.expired);
+        let rec = make_rec(500);
+        let entry = parse_passwd(&rec, &data).unwrap();
+        assert_eq!(entry.expire, 500);
     }
 
     #[test]
     fn parse_passwd_too_short() {
-        let data = vec![0u8; 4]; // way too short
+        let data = vec![0u8; 4];
         let rec = make_rec(u64::MAX);
-        assert!(parse_passwd(&rec, &data, 1000).is_err());
+        assert!(parse_passwd(&rec, &data).is_err());
     }
 }
