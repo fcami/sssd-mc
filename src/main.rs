@@ -1,16 +1,11 @@
-pub mod errors;
-pub mod murmurhash3;
-pub mod parsers;
-pub mod types;
-
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 
-use crate::errors::McResult;
-use crate::parsers::cache::{extract_strings, CacheFile};
-use crate::types::*;
+use sssd_mc::errors::McResult;
+use sssd_mc::parsers::cache::{extract_strings, CacheFile};
+use sssd_mc::types::*;
 
 #[derive(Parser)]
 #[command(name = "sssd-mc")]

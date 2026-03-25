@@ -76,6 +76,33 @@ unvendor:
     rm -rf vendor .cargo/config.toml
     @echo "[unvendor] Removed vendor/ and .cargo/config.toml"
 
+# --- Test fixture generation ---
+
+# Build the C test cache generator for a given SSSD version
+build-gen version="head":
+    cc -Wall -Wextra -O2 \
+        -I {{justfile_directory()}}/tests/sssd-sources/{{version}} \
+        {{justfile_directory()}}/tests/gen_cache.c \
+        {{justfile_directory()}}/tests/sssd-sources/{{version}}/murmurhash3.c \
+        -o {{justfile_directory()}}/tests/gen_cache_{{version}}
+
+# Generate test fixtures for a given SSSD version
+gen-fixtures version="head": (build-gen version)
+    {{justfile_directory()}}/tests/gen_cache_{{version}} \
+        {{justfile_directory()}}/tests/fixtures/{{version}}
+    @echo "[fixtures] Generated for SSSD {{version}}"
+
+# Generate fixtures for all known SSSD versions
+gen-all-fixtures:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for ver in {{justfile_directory()}}/tests/sssd-sources/*/; do
+        ver=$(basename "$ver")
+        echo "[fixtures] Building for SSSD $ver"
+        just gen-fixtures "$ver"
+    done
+
 # Clean build artifacts
 clean:
     cargo clean
+    rm -f tests/gen_cache_*
