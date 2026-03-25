@@ -18,6 +18,10 @@ pub enum CacheProblem {
         hash1: u32,
         hash2: u32,
         bucket: u32,
+        /// Name of the affected entry (if parseable).
+        name: Option<String>,
+        /// ID (UID/GID) of the affected entry (if parseable).
+        id: Option<u32>,
     },
 
     /// Record's hash1 and hash2 resolve to the same bucket.
@@ -52,8 +56,16 @@ pub enum CacheProblem {
 impl std::fmt::Display for CacheProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnreachableByHash2 { slot, hash1, hash2, bucket } => {
-                write!(f, "CRITICAL: record at slot {slot} unreachable via hash2 \
+            Self::UnreachableByHash2 { slot, hash1, hash2, bucket, name, id } => {
+                write!(f, "CRITICAL: record at slot {slot}")?;
+                if let Some(n) = name {
+                    write!(f, " ({n}")?;
+                    if let Some(i) = id {
+                        write!(f, ", id={i}")?;
+                    }
+                    write!(f, ")")?;
+                }
+                write!(f, " unreachable via hash2 \
                        (hash1={hash1:#x} hash2={hash2:#x} bucket={bucket}) — \
                        UID/GID lookup will fail")
             }
@@ -196,11 +208,24 @@ pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
 
         if !is_reachable_by_hash(cache, slot, bucket2, rec.hash2) {
             result.unreachable_count += 1;
+
+            // Try to extract name and ID for actionable output
+            let (name, id) = cache.parse_entry(slot, &rec)
+                .map(|entry| match entry {
+                    crate::entries::CacheEntry::Passwd(e) => (Some(e.name), Some(e.uid)),
+                    crate::entries::CacheEntry::Group(e) => (Some(e.name), Some(e.gid)),
+                    crate::entries::CacheEntry::Initgr(e) => (Some(e.name), None),
+                    crate::entries::CacheEntry::Sid(e) => (Some(e.sid), Some(e.id)),
+                })
+                .unwrap_or((None, None));
+
             result.problems.push(CacheProblem::UnreachableByHash2 {
                 slot,
                 hash1: rec.hash1,
                 hash2: rec.hash2,
                 bucket: bucket2,
+                name,
+                id,
             });
         }
     }
@@ -346,6 +371,7 @@ mod tests {
     fn problem_display() {
         let p = CacheProblem::UnreachableByHash2 {
             slot: 5, hash1: 0x10, hash2: 0x20, bucket: 3,
+            name: Some("testuser".to_string()), id: Some(1000),
         };
         let msg = format!("{p}");
         assert!(msg.contains("CRITICAL"));

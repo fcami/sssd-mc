@@ -34,6 +34,10 @@ fn verify_collision_reports_critical() {
             "Should suggest workaround, got:\n{stdout}");
     assert!(stdout.contains("Same-bucket hashes: 1"),
             "Should report same-bucket condition, got:\n{stdout}");
+    assert!(stdout.contains("carol"),
+            "Should name the affected user, got:\n{stdout}");
+    assert!(stdout.contains("5003"),
+            "Should show the affected UID, got:\n{stdout}");
 }
 
 #[test]
