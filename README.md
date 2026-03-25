@@ -101,6 +101,32 @@ Records:
               gecos=Test User dir=/home/testuser shell=/bin/bash
 ```
 
+JSON output (one object per line, pipe to `jq`):
+```sh
+sudo sssd-mc dump /var/lib/sss/mc/passwd -t passwd --json
+```
+
+```json
+{"type":"passwd","name":"root","passwd":"x","uid":0,"gid":0,"gecos":"root","dir":"/root","shell":"/bin/bash","expire":4102444800}
+```
+
+### Look up a record
+
+Look up by name or UID/GID, mimicking SSSD's NSS client:
+
+```sh
+# By name
+sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd root
+
+# By UID
+sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd 1000
+
+# JSON output
+sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd root --json
+```
+
+Exit code 2 if the key is not found.
+
 ### Show cache statistics
 
 ```sh
@@ -148,7 +174,7 @@ Max chain length:   2
 
 Problems:
   WARNING: record at slot 0 has hash1=0xe43eca2f and hash2=0xa9174d93 both mapping to bucket 3
-  CRITICAL: record at slot 0 unreachable via hash2 (hash1=0xe43eca2f hash2=0xa9174d93 bucket=3) — UID/GID lookup will fail
+  CRITICAL: record at slot 0 (carol, id=5003) unreachable via hash2 (hash1=0xe43eca2f hash2=0xa9174d93 bucket=3) — UID/GID lookup will fail
 
 CRITICAL: 1 record(s) unreachable by UID/GID lookup.
 This is a known SSSD defect where hash1 and hash2 collide
