@@ -112,7 +112,7 @@ sudo sssd-mc dump /var/lib/sss/mc/passwd -t passwd --json
 
 ### Look up a record
 
-Look up by name or UID/GID, mimicking SSSD's NSS client:
+Look up by name, UID/GID, or slot number:
 
 ```sh
 # By name
@@ -120,6 +120,9 @@ sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd root
 
 # By UID
 sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd 1000
+
+# By slot number (useful for inspecting records flagged by verify)
+sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd 179 --slot
 
 # JSON output
 sudo sssd-mc lookup /var/lib/sss/mc/passwd -t passwd root --json
@@ -144,8 +147,8 @@ Hash buckets:     26214 (42 used, 0.2% load)
 
 ### Verify cache integrity
 
-Check a cache for structural problems, including a known SSSD defect
-where hash collisions make records unreachable by UID/GID lookup.
+Check a cache for structural problems: barrier consistency, hash chain
+reachability, and hash value integrity.
 
 ```sh
 sudo sssd-mc verify /var/lib/sss/mc/passwd -t passwd
@@ -163,27 +166,58 @@ Max chain length:   2
 No problems found.
 ```
 
-Cache with collision bug:
+Cache with corruption:
 ```
 Cache type:         passwd
-Total records:      2
-Same-bucket hashes: 1
+Total records:      42
+Same-bucket hashes: 0
 Unreachable (hash2):1
 Hash mismatches:    0
-Max chain length:   2
+Max chain length:   3
 
 Problems:
-  WARNING: record at slot 0 has hash1=0xe43eca2f and hash2=0xa9174d93 both mapping to bucket 3
-  CRITICAL: record at slot 0 (carol, id=5003) unreachable via hash2 (hash1=0xe43eca2f hash2=0xa9174d93 bucket=3) — UID/GID lookup will fail
+  CRITICAL: record at slot 12 (jdoe, id=10042) unreachable via hash2
+    (hash1=0x1a2b hash2=0x3c4d bucket=1234) — UID/GID lookup will fail
 
 CRITICAL: 1 record(s) unreachable by UID/GID lookup.
-This is a known SSSD defect where hash1 and hash2 collide
-into the same bucket. Affected users/groups will fail
-getpwuid()/getgrgid() while getpwnam()/getgrnam() works.
 Workaround: sss_cache -E (flush all caches)
 ```
 
 Exit codes: 0 = clean, 1 = error opening file, 2 = problems detected.
+
+## Debugging: memcache vs non-memcache mismatch
+
+If `id USER` and `SSS_NSS_USE_MEMCACHE=NO id USER` show different
+group names for the same GID, use sssd-mc to investigate:
+
+```sh
+# Find the mismatched GID (example: 12345)
+diff <(id USER) <(SSS_NSS_USE_MEMCACHE=NO id USER)
+
+# Look up that GID in the group cache
+sudo sssd-mc lookup /var/lib/sss/mc/group -t group 12345
+
+# Check if multiple groups share the GID (GID conflict)
+sudo sssd-mc dump /var/lib/sss/mc/group -t group --json \
+  | jq 'select(.gid == 12345)'
+
+# Check structural integrity
+sudo sssd-mc verify /var/lib/sss/mc/group -t group
+
+# Check if the entry is stale (compare expire vs current epoch)
+sudo sssd-mc lookup /var/lib/sss/mc/group -t group 12345 --json \
+  | jq '.expire'
+date +%s
+```
+
+Common causes:
+
+- **GID conflict**: two groups from different AD domains map to the
+  same GID. The memcache stores whichever was cached first.
+- **Stale entry**: the group was renamed or GID reassigned but the
+  cache hasn't expired yet.
+- **Corruption**: crash during update or concurrent access left
+  inconsistent chain pointers or overlapping records.
 
 ## Testing with multiple SSSD versions
 
@@ -213,6 +247,8 @@ tests/
     head/              # generated binary fixtures
       passwd.cache
       group.cache
+      initgroups.cache
+      sid.cache
       hashes.txt       # murmurhash3 reference values
 ```
 
