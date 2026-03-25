@@ -52,6 +52,15 @@ pub struct SidEntry {
     pub expired: bool,
 }
 
+/// A typed cache entry (any of the four types).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheEntry {
+    Passwd(PasswdEntry),
+    Group(GroupEntry),
+    Initgr(InitgrEntry),
+    Sid(SidEntry),
+}
+
 /// Parse a passwd entry from raw record data.
 pub fn parse_passwd(rec: &McRec, data: &[u8], now: u64) -> McResult<PasswdEntry> {
     if data.len() < std::mem::size_of::<McPwdData>() {

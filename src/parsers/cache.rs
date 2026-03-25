@@ -8,6 +8,8 @@ use std::path::Path;
 
 use memmap2::Mmap;
 
+use crate::entries;
+use crate::entries::*;
 use crate::errors::{McError, McResult};
 use crate::types::*;
 
@@ -151,6 +153,17 @@ impl CacheFile {
     /// Total number of slots in the data table.
     pub fn total_slots(&self) -> u32 {
         self.header.dt_size / MC_SLOT_SIZE
+    }
+
+    /// Parse a record at the given slot into a typed entry.
+    pub fn parse_entry(&self, slot: u32, rec: &McRec, now: u64) -> McResult<CacheEntry> {
+        let data = self.read_rec_data(slot, rec)?;
+        match self.cache_type {
+            CacheType::Passwd => entries::parse_passwd(rec, data, now).map(CacheEntry::Passwd),
+            CacheType::Group => entries::parse_group(rec, data, now).map(CacheEntry::Group),
+            CacheType::Initgroups => entries::parse_initgr(rec, data, now).map(CacheEntry::Initgr),
+            CacheType::Sid => entries::parse_sid(rec, data, now).map(CacheEntry::Sid),
+        }
     }
 }
 

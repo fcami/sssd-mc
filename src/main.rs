@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 
 use sssd_mc::analysis;
 use sssd_mc::display;
-use sssd_mc::entries;
+use sssd_mc::entries::CacheEntry;
 use sssd_mc::errors::McResult;
 use sssd_mc::parsers::cache::CacheFile;
 use sssd_mc::types::CacheType;
@@ -74,31 +74,12 @@ fn now_epoch() -> u64 {
 
 fn dump_records(cache: &CacheFile, now: u64) {
     for (slot, rec) in cache.iter_records() {
-        let data = match cache.read_rec_data(slot, &rec) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("  [slot {slot}] error reading data: {e}");
-                continue;
-            }
-        };
-
-        match cache.cache_type {
-            CacheType::Passwd => match entries::parse_passwd(&rec, data, now) {
-                Ok(entry) => display::print_passwd(slot, &entry),
-                Err(e) => eprintln!("  [slot {slot}] parse error: {e}"),
-            },
-            CacheType::Group => match entries::parse_group(&rec, data, now) {
-                Ok(entry) => display::print_group(slot, &entry),
-                Err(e) => eprintln!("  [slot {slot}] parse error: {e}"),
-            },
-            CacheType::Initgroups => match entries::parse_initgr(&rec, data, now) {
-                Ok(entry) => display::print_initgr(slot, &entry),
-                Err(e) => eprintln!("  [slot {slot}] parse error: {e}"),
-            },
-            CacheType::Sid => match entries::parse_sid(&rec, data, now) {
-                Ok(entry) => display::print_sid(slot, &entry),
-                Err(e) => eprintln!("  [slot {slot}] parse error: {e}"),
-            },
+        match cache.parse_entry(slot, &rec, now) {
+            Ok(CacheEntry::Passwd(ref e)) => display::print_passwd(slot, e),
+            Ok(CacheEntry::Group(ref e)) => display::print_group(slot, e),
+            Ok(CacheEntry::Initgr(ref e)) => display::print_initgr(slot, e),
+            Ok(CacheEntry::Sid(ref e)) => display::print_sid(slot, e),
+            Err(e) => eprintln!("  [slot {slot}] error: {e}"),
         }
     }
 }
