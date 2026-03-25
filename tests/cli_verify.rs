@@ -22,8 +22,9 @@ fn verify_collision_reports_critical() {
         .expect("failed to run sssd-mc");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "verify should exit 0, stderr: {}",
-            String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.status.code(), Some(2),
+               "verify should exit 2 on critical problems, got: {:?}\nstdout:\n{stdout}",
+               output.status.code());
 
     assert!(stdout.contains("Unreachable (hash2):1"),
             "Should report 1 unreachable record, got:\n{stdout}");

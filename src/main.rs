@@ -7,7 +7,6 @@ use clap::{Parser, Subcommand};
 use sssd_mc::analysis;
 use sssd_mc::display;
 use sssd_mc::entries::CacheEntry;
-use sssd_mc::errors::McResult;
 use sssd_mc::parsers::cache::CacheFile;
 use sssd_mc::types::CacheType;
 
@@ -86,7 +85,8 @@ fn dump_records(w: &mut impl Write, cache: &CacheFile, now: u64) -> io::Result<(
     Ok(())
 }
 
-fn run() -> McResult<()> {
+/// Returns true if critical problems were found (for exit code).
+fn run() -> Result<bool, sssd_mc::errors::McError> {
     let cli = Cli::parse();
     let now = now_epoch();
     let mut out = io::stdout().lock();
@@ -136,15 +136,23 @@ fn run() -> McResult<()> {
                     writeln!(out, "Workaround: sss_cache -E (flush all caches)").ok();
                 }
             }
+
+            if result.unreachable_count > 0 || result.hash_mismatch_count > 0 {
+                return Ok(true);
+            }
         }
     }
 
-    Ok(())
+    Ok(false)
 }
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+    match run() {
+        Ok(true) => std::process::exit(2),
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
     }
 }
