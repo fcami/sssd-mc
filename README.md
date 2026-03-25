@@ -65,6 +65,28 @@ just unvendor
 The SSSD memory cache files are owned by root, so `sssd-mc` typically
 needs to be run with `sudo` or as root.
 
+### Expiry calculations
+
+The `[EXPIRED]` tag and expired/active record counts are computed
+against a reference time. By default this is the **file modification
+time**, which is correct when analyzing cache files offline (e.g. from
+SOS reports). Both timestamps are always shown:
+
+```
+File modified:  2026-03-25 14:30:12 UTC (used for expiry calculations)
+Current time:   2026-03-25 18:45:03 UTC
+```
+
+Override with `--now`:
+
+```sh
+# Use current system time (for live analysis)
+sudo sssd-mc dump /var/lib/sss/mc/passwd -t passwd --now=system
+
+# Use a specific UNIX epoch timestamp
+sssd-mc dump passwd.cache -t passwd --now=1742998000
+```
+
 ### Show cache header
 
 ```sh
@@ -81,6 +103,8 @@ Free table:     offset=0x00100280 size=3277
 Hash table:     offset=0x00100f51 size=104857
 Barriers:       b1=0xf0000001 b2=0xf0000001
 Total slots:    26214
+File modified:  2026-03-25 14:30:12 UTC (used for expiry calculations)
+Current time:   2026-03-25 18:45:03 UTC
 ```
 
 ### Dump all records

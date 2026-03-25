@@ -20,6 +20,8 @@ pub struct CacheFile {
     mmap: Mmap,
     pub header: McHeader,
     pub cache_type: CacheType,
+    /// File modification time as seconds since UNIX epoch, if available.
+    pub file_mtime: Option<u64>,
 }
 
 /// Aligned header size (rounded up to 64-byte boundary).
@@ -33,6 +35,11 @@ impl CacheFile {
             source: e,
         })?;
 
+        let file_mtime = file.metadata().ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+
         // SAFETY: we open read-only; the file may be concurrently modified
         // by sssd_nss, but we only read and validate barriers.
         let mmap = unsafe {
@@ -42,11 +49,11 @@ impl CacheFile {
             })?
         };
 
-        Self::from_bytes(mmap, cache_type)
+        Self::from_bytes(mmap, cache_type, file_mtime)
     }
 
     /// Parse from an already-mapped region.
-    fn from_bytes(mmap: Mmap, cache_type: CacheType) -> McResult<Self> {
+    fn from_bytes(mmap: Mmap, cache_type: CacheType, file_mtime: Option<u64>) -> McResult<Self> {
         if mmap.len() < MC_HEADER_ALIGNED {
             return Err(McError::TooSmall {
                 size: mmap.len(),
@@ -61,6 +68,7 @@ impl CacheFile {
             mmap,
             header,
             cache_type,
+            file_mtime,
         })
     }
 

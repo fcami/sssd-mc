@@ -17,6 +17,12 @@ use sssd_mc::types::CacheType;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Reference time for expiry calculations.
+    /// Default: file modification time. Use "system" for current system
+    /// time, or a numeric UNIX epoch timestamp.
+    #[arg(long, global = true)]
+    now: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -84,11 +90,34 @@ fn parse_cache_type(s: &str) -> Result<CacheType, String> {
     }
 }
 
-fn now_epoch() -> u64 {
+fn system_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Resolve the effective "now" for expiry calculations.
+/// Returns (effective_now, now_is_file_mtime).
+fn resolve_now(now_arg: &Option<String>, file_mtime: Option<u64>) -> (u64, bool) {
+    match now_arg.as_deref() {
+        Some("system") => (system_now(), false),
+        Some(s) => {
+            if let Ok(epoch) = s.parse::<u64>() {
+                (epoch, false)
+            } else {
+                eprintln!("Warning: invalid --now value '{s}', using file mtime");
+                (file_mtime.unwrap_or_else(system_now), file_mtime.is_some())
+            }
+        }
+        None => {
+            // Default: use file mtime if available, otherwise system time
+            match file_mtime {
+                Some(mtime) => (mtime, true),
+                None => (system_now(), false),
+            }
+        }
+    }
 }
 
 fn dump_records(w: &mut impl Write, cache: &CacheFile, now: u64) -> io::Result<()> {
@@ -107,16 +136,19 @@ fn dump_records(w: &mut impl Write, cache: &CacheFile, now: u64) -> io::Result<(
 /// Returns true if critical problems were found (for exit code).
 fn run() -> Result<bool, sssd_mc::errors::McError> {
     let cli = Cli::parse();
-    let now = now_epoch();
+    let sys_now = system_now();
     let mut out = io::stdout().lock();
 
     match cli.command {
         Commands::Header { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
             display::write_header(&mut out, &cache).ok();
+            let (_, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
+            display::write_time_context(&mut out, &cache, sys_now, now_is_mtime).ok();
         }
         Commands::Dump { path, r#type, json } => {
             let cache = CacheFile::open(&path, r#type)?;
+            let (now, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
             if json {
                 for (slot, rec) in cache.iter_records() {
                     match cache.parse_entry(slot, &rec) {
@@ -129,6 +161,7 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 }
             } else {
                 display::write_header(&mut out, &cache).ok();
+                display::write_time_context(&mut out, &cache, sys_now, now_is_mtime).ok();
                 writeln!(out).ok();
                 writeln!(out, "Records:").ok();
                 dump_records(&mut out, &cache, now).ok();
@@ -136,6 +169,7 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
         }
         Commands::Lookup { path, r#type, key, slot: by_slot, json } => {
             let cache = CacheFile::open(&path, r#type)?;
+            let (now, _) = resolve_now(&cli.now, cache.file_mtime);
 
             let result = if by_slot {
                 let slot_num: u32 = key.parse().map_err(|_| {
@@ -144,7 +178,6 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 let rec = cache.read_rec(slot_num)?;
                 cache.parse_entry(slot_num, &rec).ok().map(|e| (slot_num, e))
             } else {
-                // Try name lookup (hash1) first, then ID lookup (hash2)
                 cache.lookup(&key, false)?
                     .or(cache.lookup(&key, true)?)
             };
@@ -165,19 +198,22 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 }
                 None => {
                     eprintln!("Not found: {key}");
-                    return Ok(true); // exit non-zero
+                    return Ok(true);
                 }
             }
         }
         Commands::Stats { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
-            display::write_stats(&mut out, &cache, now).ok();
+            let (now, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
+            display::write_stats(&mut out, &cache, now, sys_now, now_is_mtime).ok();
         }
         Commands::Verify { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
+            let (now, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
             let result = analysis::verify_cache(&cache);
 
             writeln!(out, "Cache type:         {}", cache.cache_type).ok();
+            display::write_time_context(&mut out, &cache, sys_now, now_is_mtime).ok();
             writeln!(out, "Total records:      {}", result.total_records).ok();
             writeln!(out, "Same-bucket hashes: {}", result.same_bucket_count).ok();
             writeln!(out, "Unreachable (hash2):{}", result.unreachable_count).ok();
@@ -196,13 +232,13 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 if result.unreachable_count > 0 {
                     writeln!(out, "CRITICAL: {} record(s) unreachable by UID/GID lookup.",
                              result.unreachable_count).ok();
-                    writeln!(out, "This is a known SSSD defect where hash1 and hash2 collide").ok();
-                    writeln!(out, "into the same bucket. Affected users/groups will fail").ok();
-                    writeln!(out, "getpwuid()/getgrgid() while getpwnam()/getgrnam() works.").ok();
+                    writeln!(out, "Affected users/groups may fail getpwuid()/getgrgid()").ok();
+                    writeln!(out, "while getpwnam()/getgrnam() still works.").ok();
                     writeln!(out, "Workaround: sss_cache -E (flush all caches)").ok();
                 }
             }
 
+            let _ = now; // suppress unused warning — verify doesn't use expiry
             if result.unreachable_count > 0 || result.hash_mismatch_count > 0 {
                 return Ok(true);
             }

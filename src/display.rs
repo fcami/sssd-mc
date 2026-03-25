@@ -14,6 +14,62 @@ fn expired_tag(expire: u64, now: u64) -> &'static str {
     if expire < now { " [EXPIRED]" } else { "" }
 }
 
+/// Format a UNIX epoch timestamp as "YYYY-MM-DD HH:MM:SS UTC".
+/// Simple implementation without external crate — handles dates from
+/// 1970 to 2099 correctly.
+fn format_epoch(epoch: u64) -> String {
+    // Days per month (non-leap)
+    const MONTH_DAYS: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let secs = epoch % 60;
+    let mins = (epoch / 60) % 60;
+    let hours = (epoch / 3600) % 24;
+    let mut days = epoch / 86400;
+
+    let mut year = 1970u64;
+    loop {
+        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let mut month = 0u64;
+    for (i, &md) in MONTH_DAYS.iter().enumerate() {
+        let d = if i == 1 && is_leap { md + 1 } else { md };
+        if days < d {
+            month = i as u64 + 1;
+            break;
+        }
+        days -= d;
+    }
+    let day = days + 1;
+
+    format!("{year:04}-{month:02}-{day:02} {hours:02}:{mins:02}:{secs:02} UTC")
+}
+
+/// Write the timestamp header lines showing file mtime, current time,
+/// and which is used for expiry.
+pub fn write_time_context(w: &mut impl Write, cache: &CacheFile, system_now: u64, now_is_file_mtime: bool) -> std::io::Result<()> {
+    if let Some(mtime) = cache.file_mtime {
+        let label = if now_is_file_mtime {
+            " (used for expiry calculations)"
+        } else {
+            ""
+        };
+        writeln!(w, "File modified:  {}{label}", format_epoch(mtime))?;
+    }
+    let now_label = if !now_is_file_mtime {
+        " (used for expiry calculations)"
+    } else {
+        ""
+    };
+    writeln!(w, "Current time:   {}{now_label}", format_epoch(system_now))
+}
+
 pub fn write_header(w: &mut impl Write, cache: &CacheFile) -> std::io::Result<()> {
     let h = &cache.header;
     let status_str = match h.status {
@@ -69,7 +125,7 @@ pub fn write_sid(w: &mut impl Write, slot: u32, entry: &SidEntry, now: u64) -> s
              entry.sid, entry.id, entry.id_type, entry.populated_by, entry.expire)
 }
 
-pub fn write_stats(w: &mut impl Write, cache: &CacheFile, now: u64) -> std::io::Result<()> {
+pub fn write_stats(w: &mut impl Write, cache: &CacheFile, now: u64, system_now: u64, now_is_file_mtime: bool) -> std::io::Result<()> {
     let mut total = 0u32;
     let mut expired = 0u32;
     let mut active = 0u32;
@@ -100,9 +156,28 @@ pub fn write_stats(w: &mut impl Write, cache: &CacheFile, now: u64) -> std::io::
     };
 
     writeln!(w, "Cache type:       {}", cache.cache_type)?;
+    write_time_context(w, cache, system_now, now_is_file_mtime)?;
     writeln!(w, "Total records:    {total}")?;
     writeln!(w, "Active records:   {active}")?;
     writeln!(w, "Expired records:  {expired}")?;
     writeln!(w, "Total slots:      {}", cache.total_slots())?;
     writeln!(w, "Hash buckets:     {ht_entries} ({used_buckets} used, {load:.1}% load)")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_epoch_known_date() {
+        // 2026-03-25 00:00:00 UTC = 1774396800
+        let s = format_epoch(1774396800);
+        assert!(s.starts_with("2026-03-25"), "got: {s}");
+    }
+
+    #[test]
+    fn format_epoch_unix_zero() {
+        let s = format_epoch(0);
+        assert_eq!(s, "1970-01-01 00:00:00 UTC");
+    }
 }
