@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 
+use sssd_mc::analysis;
 use sssd_mc::display;
 use sssd_mc::entries;
 use sssd_mc::errors::McResult;
@@ -38,6 +39,14 @@ enum Commands {
     },
     /// Show cache file statistics
     Stats {
+        /// Path to the cache file
+        path: PathBuf,
+        /// Cache type
+        #[arg(short, long, value_parser = parse_cache_type)]
+        r#type: CacheType,
+    },
+    /// Verify cache integrity (detect hash collisions and unreachable records)
+    Verify {
         /// Path to the cache file
         path: PathBuf,
         /// Cache type
@@ -113,6 +122,35 @@ fn run() -> McResult<()> {
         Commands::Stats { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
             display::print_stats(&cache, now);
+        }
+        Commands::Verify { path, r#type } => {
+            let cache = CacheFile::open(&path, r#type)?;
+            let result = analysis::verify_cache(&cache);
+
+            println!("Cache type:         {}", cache.cache_type);
+            println!("Total records:      {}", result.total_records);
+            println!("Same-bucket hashes: {}", result.same_bucket_count);
+            println!("Unreachable (hash2):{}", result.unreachable_count);
+            println!("Max chain length:   {}", result.max_chain_length);
+            println!();
+
+            if result.problems.is_empty() {
+                println!("No problems found.");
+            } else {
+                println!("Problems:");
+                for problem in &result.problems {
+                    println!("  {problem}");
+                }
+                println!();
+                if result.unreachable_count > 0 {
+                    println!("CRITICAL: {} record(s) unreachable by UID/GID lookup.",
+                             result.unreachable_count);
+                    println!("This is a known SSSD defect where hash1 and hash2 collide");
+                    println!("into the same bucket. Affected users/groups will fail");
+                    println!("getpwuid()/getgrgid() while getpwnam()/getgrnam() works.");
+                    println!("Workaround: sss_cache -E (flush all caches)");
+                }
+            }
         }
     }
 

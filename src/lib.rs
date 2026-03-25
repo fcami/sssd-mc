@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod display;
 pub mod entries;
 pub mod errors;

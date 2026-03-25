@@ -315,3 +315,36 @@ fn passwd_head_hash_lookup_root() {
     let pwd: McPwdData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
     assert_eq!(pwd.uid, 0, "Hash lookup for root should find uid=0");
 }
+
+#[test]
+fn passwd_head_hash_lookup_by_uid() {
+    // Secondary hash lookup: SSSD hashes the UID as a string for hash2
+    let cache = open_passwd("head");
+    let seed = cache.seed();
+
+    // Look up uid 1000 (testuser) — SSSD hashes "1000\0"
+    let hash = sssd_mc::murmurhash3::murmurhash3(b"1000\0", seed) % cache.ht_entries();
+    let mut slot = cache.ht_entry(hash).expect("valid ht entry");
+
+    // Walk the chain looking for hash2 match
+    let mut found = false;
+    while slot != MC_INVALID_VAL32 {
+        let rec = cache.read_rec(slot).expect("valid record");
+        if rec.hash2 == hash {
+            let data = cache.read_rec_data(slot, &rec).expect("valid data");
+            let pwd: McPwdData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+            assert_eq!(pwd.uid, 1000, "UID hash lookup should find uid=1000");
+            found = true;
+            break;
+        }
+        // Follow chain via the hash that matches
+        if rec.hash1 == hash {
+            slot = rec.next1;
+        } else if rec.hash2 == hash {
+            slot = rec.next2;
+        } else {
+            break;
+        }
+    }
+    assert!(found, "Should find testuser via UID hash lookup");
+}

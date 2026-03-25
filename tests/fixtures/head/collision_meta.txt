@@ -1,0 +1,6 @@
+victim_name carol
+victim_uid 5003
+victim_bucket 3
+pusher_name frank
+pusher_uid 5006
+ht_entries 4

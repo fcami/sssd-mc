@@ -174,7 +174,13 @@ static uint32_t builder_add_record(struct cache_builder *b,
     }
     ht[bucket1] = slot;
 
-    /* Link into hash table chain for hash2 */
+    /* Link into hash table chain for hash2.
+     *
+     * When bucket1 == bucket2, SSSD's sss_mc_add_rec_to_chain() detects
+     * that the record is already in the chain (added by hash1) and skips
+     * it. The record is findable by hash2 because sss_mc_next_slot_with_hash
+     * checks rec->hash2 == hash and returns next2. We replicate this by
+     * only linking hash2 into a *different* bucket. */
     uint32_t bucket2 = hash2 % NUM_HT_ENTRIES;
     if (bucket1 != bucket2) {
         if (ht[bucket2] != MC_INVALID_VAL) {
@@ -560,6 +566,242 @@ static int generate_sid_cache(const char *output_dir)
 }
 
 /* ------------------------------------------------------------------ */
+/* Collision fixture: passwd cache that triggers the hash2             */
+/* unreachability bug.                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * To trigger the bug we need:
+ * 1. Record B where hash1("name") % ht == hash2("uid") % ht (same bucket)
+ * 2. Record C inserted after B, where hash1("name_c") % ht == same bucket
+ * 3. C pushes B down the chain via next1; B's next2 is MC_INVALID_VAL
+ * 4. Lookup by B's UID walks chain from head (C), C's hash2 != B's hash2,
+ *    follows next2 = MC_INVALID_VAL → B is unreachable.
+ *
+ * We use NUM_COLLISION_HT_ENTRIES = 4 to make collisions easy to find.
+ */
+
+#define NUM_COLLISION_HT_ENTRIES 4
+
+static uint32_t collision_mc_hash(const char *key, size_t len, uint32_t seed)
+{
+    return murmurhash3(key, (int)len, seed) % NUM_COLLISION_HT_ENTRIES;
+}
+
+static void collision_builder_init(struct cache_builder *b, uint32_t num_slots)
+{
+    b->seed = TEST_SEED;
+    b->ht_size = NUM_COLLISION_HT_ENTRIES * sizeof(uint32_t);
+    b->dt_size = num_slots * MC_SLOT_SIZE;
+    b->ft_size = (num_slots + 7) / 8;
+
+    b->ht_offset = MC_HEADER_SIZE;
+    b->ft_offset = b->ht_offset + b->ht_size;
+    b->dt_offset = b->ft_offset + MC_ALIGN64(b->ft_size);
+
+    b->buf_size = b->dt_offset + b->dt_size;
+    b->buf = calloc(1, b->buf_size);
+    if (!b->buf) {
+        perror("calloc");
+        exit(1);
+    }
+
+    b->dt_pos = 0;
+
+    uint32_t *ht = (uint32_t *)(b->buf + b->ht_offset);
+    for (uint32_t i = 0; i < NUM_COLLISION_HT_ENTRIES; i++) {
+        ht[i] = MC_INVALID_VAL;
+    }
+}
+
+static uint32_t collision_builder_add_record(struct cache_builder *b,
+                                             uint32_t hash1, uint32_t hash2,
+                                             uint64_t expire,
+                                             const void *payload, uint32_t payload_len)
+{
+    uint32_t rec_len = sizeof(struct sss_mc_rec) + payload_len;
+    uint32_t slots_needed = MC_SIZE_TO_SLOTS(rec_len);
+    uint32_t slot = b->dt_pos / MC_SLOT_SIZE;
+
+    if (b->dt_pos + slots_needed * MC_SLOT_SIZE > b->dt_size) {
+        fprintf(stderr, "Data table full\n");
+        return MC_INVALID_VAL;
+    }
+
+    uint8_t *rec_ptr = b->buf + b->dt_offset + b->dt_pos;
+    struct sss_mc_rec *rec = (struct sss_mc_rec *)rec_ptr;
+
+    rec->b1 = BARRIER_INIT;
+    rec->len = rec_len;
+    rec->expire = expire;
+    rec->hash1 = hash1;
+    rec->hash2 = hash2;
+    rec->next1 = MC_INVALID_VAL;
+    rec->next2 = MC_INVALID_VAL;
+    rec->padding = 0;
+    rec->b2 = BARRIER_INIT;
+
+    memcpy(rec->data, payload, payload_len);
+
+    uint8_t *ft = b->buf + b->ft_offset;
+    for (uint32_t i = 0; i < slots_needed; i++) {
+        uint32_t s = slot + i;
+        ft[s / 8] |= (0x80 >> (s % 8));
+    }
+
+    /* Replicate SSSD's sss_mc_add_rec_to_chain() behavior exactly:
+     * - Insert into hash1's bucket chain
+     * - If bucket1 != bucket2, also insert into hash2's bucket chain
+     * - If bucket1 == bucket2, skip hash2 (this is the bug) */
+    uint32_t *ht = (uint32_t *)(b->buf + b->ht_offset);
+    uint32_t bucket1 = hash1 % NUM_COLLISION_HT_ENTRIES;
+    if (ht[bucket1] != MC_INVALID_VAL) {
+        rec->next1 = ht[bucket1];
+    }
+    ht[bucket1] = slot;
+
+    uint32_t bucket2 = hash2 % NUM_COLLISION_HT_ENTRIES;
+    if (bucket1 != bucket2) {
+        if (ht[bucket2] != MC_INVALID_VAL) {
+            rec->next2 = ht[bucket2];
+        }
+        ht[bucket2] = slot;
+    }
+    /* When bucket1 == bucket2: next2 stays MC_INVALID_VAL — the bug. */
+
+    b->dt_pos += slots_needed * MC_SLOT_SIZE;
+    return slot;
+}
+
+static int generate_collision_cache(const char *output_dir)
+{
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/collision.cache", output_dir);
+
+    /* With only 4 hash buckets, we brute-force to find the collision
+     * condition at generation time. */
+
+    struct cache_builder b;
+    collision_builder_init(&b, 256);
+
+    uint8_t payload[1024];
+    uint32_t plen;
+
+    /* Find a name+uid pair where hash1(name) % 4 == hash2(uid) % 4.
+     * We try known names and UIDs. With 4 buckets this is very likely. */
+    const char *victim_name = NULL;
+    uint32_t victim_uid = 0;
+    uint32_t victim_bucket = 0;
+
+    /* Search for a same-bucket pair */
+    struct { const char *name; uint32_t uid; } candidates[] = {
+        {"alice", 5001}, {"bob", 5002}, {"carol", 5003},
+        {"dave", 5004}, {"eve", 5005}, {"frank", 5006},
+        {"grace", 5007}, {"heidi", 5008}, {"ivan", 5009},
+        {"judy", 5010}, {"mallory", 5011}, {"oscar", 5012},
+    };
+    int ncandidates = sizeof(candidates) / sizeof(candidates[0]);
+
+    for (int i = 0; i < ncandidates; i++) {
+        uint32_t h1 = collision_mc_hash(candidates[i].name,
+                                         strlen(candidates[i].name) + 1,
+                                         b.seed);
+        char uidstr[11];
+        snprintf(uidstr, sizeof(uidstr), "%u", candidates[i].uid);
+        uint32_t h2 = collision_mc_hash(uidstr, strlen(uidstr) + 1, b.seed);
+        if (h1 == h2) {
+            victim_name = candidates[i].name;
+            victim_uid = candidates[i].uid;
+            victim_bucket = h1;
+            break;
+        }
+    }
+
+    if (victim_name == NULL) {
+        fprintf(stderr, "Could not find same-bucket collision pair\n");
+        builder_free(&b);
+        return -1;
+    }
+
+    printf("  collision.cache: victim=%s uid=%u bucket=%u\n",
+           victim_name, victim_uid, victim_bucket);
+
+    /* Step 1: Insert victim record (B) — hash1 and hash2 in same bucket */
+    plen = build_passwd_payload(payload, sizeof(payload),
+                                victim_name, "x", victim_uid, victim_uid,
+                                "Victim User", "/home/victim", "/bin/bash");
+    uint32_t h1_victim = murmurhash3(victim_name,
+                                      strlen(victim_name) + 1, b.seed);
+    char uidstr[11];
+    snprintf(uidstr, sizeof(uidstr), "%u", victim_uid);
+    uint32_t h2_victim = murmurhash3(uidstr, strlen(uidstr) + 1, b.seed);
+    collision_builder_add_record(&b, h1_victim, h2_victim, EXPIRE_FUTURE,
+                                 payload, plen);
+
+    /* Step 2: Find a name whose hash1 lands in the same bucket, pushing
+     * the victim down the chain. This record's hash2 must be different
+     * from victim's hash2 (so chain walk by hash2 won't find victim). */
+    const char *pusher_name = NULL;
+    uint32_t pusher_uid = 0;
+
+    for (int i = 0; i < ncandidates; i++) {
+        if (candidates[i].name == victim_name) continue;
+        uint32_t h1 = collision_mc_hash(candidates[i].name,
+                                         strlen(candidates[i].name) + 1,
+                                         b.seed);
+        if (h1 == victim_bucket) {
+            /* Also ensure pusher's hash2 doesn't accidentally land
+             * in victim's bucket via hash2 chain */
+            char uid2[11];
+            snprintf(uid2, sizeof(uid2), "%u", candidates[i].uid);
+            uint32_t h2 = murmurhash3(uid2, strlen(uid2) + 1, b.seed);
+            if (h2 != h2_victim) {
+                pusher_name = candidates[i].name;
+                pusher_uid = candidates[i].uid;
+                break;
+            }
+        }
+    }
+
+    if (pusher_name == NULL) {
+        fprintf(stderr, "Could not find pusher for collision\n");
+        builder_free(&b);
+        return -1;
+    }
+
+    printf("  collision.cache: pusher=%s uid=%u (pushes victim down chain)\n",
+           pusher_name, pusher_uid);
+
+    plen = build_passwd_payload(payload, sizeof(payload),
+                                pusher_name, "x", pusher_uid, pusher_uid,
+                                "Pusher User", "/home/pusher", "/bin/bash");
+    uint32_t h1_pusher = murmurhash3(pusher_name,
+                                      strlen(pusher_name) + 1, b.seed);
+    snprintf(uidstr, sizeof(uidstr), "%u", pusher_uid);
+    uint32_t h2_pusher = murmurhash3(uidstr, strlen(uidstr) + 1, b.seed);
+    collision_builder_add_record(&b, h1_pusher, h2_pusher, EXPIRE_FUTURE,
+                                 payload, plen);
+
+    /* Write metadata file so the Rust test knows which record is the victim */
+    char meta_path[4096];
+    snprintf(meta_path, sizeof(meta_path), "%s/collision_meta.txt", output_dir);
+    FILE *mf = fopen(meta_path, "w");
+    if (mf) {
+        fprintf(mf, "victim_name %s\n", victim_name);
+        fprintf(mf, "victim_uid %u\n", victim_uid);
+        fprintf(mf, "victim_bucket %u\n", victim_bucket);
+        fprintf(mf, "pusher_name %s\n", pusher_name);
+        fprintf(mf, "pusher_uid %u\n", pusher_uid);
+        fprintf(mf, "ht_entries %u\n", NUM_COLLISION_HT_ENTRIES);
+        fclose(mf);
+    }
+
+    int ret = builder_write_file(&b, path);
+    builder_free(&b);
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* Hash reference values                                              */
 /* ------------------------------------------------------------------ */
 
@@ -641,6 +883,7 @@ int main(int argc, char *argv[])
     if (generate_group_cache(output_dir) != 0) return 1;
     if (generate_initgroups_cache(output_dir) != 0) return 1;
     if (generate_sid_cache(output_dir) != 0) return 1;
+    if (generate_collision_cache(output_dir) != 0) return 1;
     if (generate_hash_reference(output_dir) != 0) return 1;
 
     printf("Done.\n");
