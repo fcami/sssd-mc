@@ -37,6 +37,9 @@ pub enum McError {
     #[error("string at offset {offset} is not null-terminated")]
     UnterminatedString { offset: usize },
 
+    #[error("record data too short ({actual} bytes, need at least {expected})")]
+    DataTooShort { expected: usize, actual: usize },
+
     #[error("table offset in header is out of file bounds: {field}={offset}, file_size={file_size}")]
     TableOutOfBounds {
         field: &'static str,

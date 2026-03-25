@@ -60,20 +60,18 @@ pub enum CacheEntry {
 /// Parse a passwd entry from raw record data.
 pub fn parse_passwd(rec: &McRec, data: &[u8]) -> McResult<PasswdEntry> {
     if data.len() < std::mem::size_of::<McPwdData>() {
-        return Err(McError::InvalidRecordLength {
-            slot: 0,
-            len: data.len() as u32,
-            dt_size: 0,
+        return Err(McError::DataTooShort {
+            expected: std::mem::size_of::<McPwdData>(),
+            actual: data.len(),
         });
     }
     let pwd: McPwdData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
     let strs_start = std::mem::size_of::<McPwdData>();
     let strs_end = strs_start + pwd.strs_len as usize;
     if strs_end > data.len() {
-        return Err(McError::InvalidRecordLength {
-            slot: 0,
-            len: data.len() as u32,
-            dt_size: 0,
+        return Err(McError::DataTooShort {
+            expected: strs_end,
+            actual: data.len(),
         });
     }
     let strings = extract_strings(&data[strs_start..strs_end]);
@@ -93,20 +91,18 @@ pub fn parse_passwd(rec: &McRec, data: &[u8]) -> McResult<PasswdEntry> {
 /// Parse a group entry from raw record data.
 pub fn parse_group(rec: &McRec, data: &[u8]) -> McResult<GroupEntry> {
     if data.len() < std::mem::size_of::<McGrpData>() {
-        return Err(McError::InvalidRecordLength {
-            slot: 0,
-            len: data.len() as u32,
-            dt_size: 0,
+        return Err(McError::DataTooShort {
+            expected: std::mem::size_of::<McGrpData>(),
+            actual: data.len(),
         });
     }
     let grp: McGrpData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
     let strs_start = std::mem::size_of::<McGrpData>();
     let strs_end = strs_start + grp.strs_len as usize;
     if strs_end > data.len() {
-        return Err(McError::InvalidRecordLength {
-            slot: 0,
-            len: data.len() as u32,
-            dt_size: 0,
+        return Err(McError::DataTooShort {
+            expected: strs_end,
+            actual: data.len(),
         });
     }
     let strings = extract_strings(&data[strs_start..strs_end]);
@@ -123,10 +119,9 @@ pub fn parse_group(rec: &McRec, data: &[u8]) -> McResult<GroupEntry> {
 /// Parse an initgroups entry from raw record data.
 pub fn parse_initgr(rec: &McRec, data: &[u8]) -> McResult<InitgrEntry> {
     if data.len() < std::mem::size_of::<McInitgrData>() {
-        return Err(McError::InvalidRecordLength {
-            slot: 0,
-            len: data.len() as u32,
-            dt_size: 0,
+        return Err(McError::DataTooShort {
+            expected: std::mem::size_of::<McInitgrData>(),
+            actual: data.len(),
         });
     }
     let initgr: McInitgrData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
@@ -162,10 +157,9 @@ pub fn parse_initgr(rec: &McRec, data: &[u8]) -> McResult<InitgrEntry> {
 /// Parse a SID entry from raw record data.
 pub fn parse_sid(rec: &McRec, data: &[u8]) -> McResult<SidEntry> {
     if data.len() < std::mem::size_of::<McSidData>() {
-        return Err(McError::InvalidRecordLength {
-            slot: 0,
-            len: data.len() as u32,
-            dt_size: 0,
+        return Err(McError::DataTooShort {
+            expected: std::mem::size_of::<McSidData>(),
+            actual: data.len(),
         });
     }
     let sid: McSidData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
