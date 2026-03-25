@@ -12,7 +12,8 @@ use crate::types::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheProblem {
     /// Record is unreachable via its secondary hash (hash2) chain walk.
-    /// This means lookups by UID/GID will fail for this record.
+    /// Indicates cache corruption (e.g. from concurrent access, crash
+    /// during update, or record overlap). Lookups by UID/GID may fail.
     UnreachableByHash2 {
         slot: u32,
         hash1: u32,
@@ -24,16 +25,14 @@ pub enum CacheProblem {
         id: Option<u32>,
     },
 
-    /// Record's hash1 and hash2 resolve to the same bucket.
-    /// When hashes are identical this is harmless; when different
-    /// it's the precondition for the unreachability bug.
+    /// Record's hash1 and hash2 are the same bucket index.
+    /// SSSD stores bucket indices (not raw hashes), so when hash1 == hash2
+    /// the lookup always follows the correctly-linked next1 chain.
+    /// This is informational only — not a bug.
     SameBucketHashes {
         slot: u32,
         hash1: u32,
-        hash2: u32,
         bucket: u32,
-        /// True when hash1 == hash2 (identical, harmless).
-        identical: bool,
     },
 
     /// Record has inconsistent barriers.
@@ -72,15 +71,9 @@ impl std::fmt::Display for CacheProblem {
                        (hash1={hash1:#x} hash2={hash2:#x} bucket={bucket}) — \
                        UID/GID lookup will fail")
             }
-            Self::SameBucketHashes { slot, hash1, hash2, bucket, identical } => {
-                if *identical {
-                    write!(f, "INFO: record at slot {slot} has identical hash1=hash2={hash1:#x} \
-                           (bucket {bucket}) — harmless, lookups use same chain")
-                } else {
-                    write!(f, "WARNING: record at slot {slot} has hash1={hash1:#x} and \
-                           hash2={hash2:#x} both mapping to bucket {bucket} — \
-                           at risk if pushed down chain by later insert")
-                }
+            Self::SameBucketHashes { slot, hash1, bucket } => {
+                write!(f, "INFO: record at slot {slot} has hash1=hash2={hash1:#x} \
+                       (bucket {bucket}) — harmless, lookups use same chain")
             }
             Self::BarrierMismatch { slot, b1, b2 } => {
                 write!(f, "ERROR: record at slot {slot} has barrier mismatch \
@@ -210,9 +203,7 @@ pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
             result.problems.push(CacheProblem::SameBucketHashes {
                 slot,
                 hash1: rec.hash1,
-                hash2: rec.hash2,
                 bucket: bucket1,
-                identical: rec.hash1 == rec.hash2,
             });
         }
 
@@ -392,17 +383,10 @@ mod tests {
     #[test]
     fn problem_same_bucket_display() {
         let p = CacheProblem::SameBucketHashes {
-            slot: 2, hash1: 0x40, hash2: 0x40, bucket: 0, identical: true,
+            slot: 2, hash1: 0x40, bucket: 0,
         };
         let msg = format!("{p}");
         assert!(msg.contains("INFO"));
         assert!(msg.contains("harmless"));
-
-        let p2 = CacheProblem::SameBucketHashes {
-            slot: 3, hash1: 0x40, hash2: 0x80, bucket: 0, identical: false,
-        };
-        let msg2 = format!("{p2}");
-        assert!(msg2.contains("WARNING"));
-        assert!(msg2.contains("at risk"));
     }
 }
