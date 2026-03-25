@@ -161,23 +161,17 @@ fn chain_length(cache: &CacheFile, bucket: u32, hash: u32) -> u32 {
     length
 }
 
-/// Verify the integrity of a cache file.
+/// Check structural integrity: barriers, reachability, chain lengths.
 ///
-/// Checks every record for:
-/// - Barrier consistency
-/// - Same-bucket hash1/hash2 condition
-/// - Reachability via both hash1 and hash2 chain walks
-///
-/// Also checks hash chain lengths for degraded performance.
-pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
+/// This does not read record payloads — it only examines record headers
+/// and hash table structure.
+pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
     let mut result = VerifyResult::default();
     let ht_entries = cache.ht_entries();
 
-    // Check each record
     for (slot, rec) in cache.iter_records() {
         result.total_records += 1;
 
-        // Barrier check (iter_records already filters, but let's be explicit)
         if rec.b1 != rec.b2 {
             result.problems.push(CacheProblem::BarrierMismatch {
                 slot,
@@ -190,7 +184,6 @@ pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
         let bucket1 = rec.hash1 % ht_entries;
         let bucket2 = rec.hash2 % ht_entries;
 
-        // Same-bucket check
         if bucket1 == bucket2 {
             result.same_bucket_count += 1;
             result.problems.push(CacheProblem::SameBucketHashes {
@@ -201,7 +194,6 @@ pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
             });
         }
 
-        // Hash2 reachability check
         if !is_reachable_by_hash(cache, slot, bucket2, rec.hash2) {
             result.unreachable_count += 1;
             result.problems.push(CacheProblem::UnreachableByHash2 {
@@ -211,8 +203,53 @@ pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
                 bucket: bucket2,
             });
         }
+    }
 
-        // Hash value integrity check (passwd and group only)
+    // Check chain lengths
+    let mut checked_buckets = vec![false; ht_entries as usize];
+    for i in 0..ht_entries {
+        if checked_buckets[i as usize] {
+            continue;
+        }
+        let slot = match cache.ht_entry(i) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if slot == MC_INVALID_VAL32 {
+            continue;
+        }
+        checked_buckets[i as usize] = true;
+
+        let rec = match cache.read_rec(slot) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if rec.hash1 % ht_entries == i {
+            let len = chain_length(cache, i, rec.hash1);
+            if len > result.max_chain_length {
+                result.max_chain_length = len;
+            }
+            if len > LONG_CHAIN_THRESHOLD {
+                result.problems.push(CacheProblem::LongChain {
+                    bucket: i,
+                    length: len,
+                });
+            }
+        }
+    }
+
+    result
+}
+
+/// Check hash integrity: recompute hashes from record data and compare
+/// against stored values. Only supported for passwd and group caches.
+pub fn verify_hashes(cache: &CacheFile) -> VerifyResult {
+    let mut result = VerifyResult::default();
+
+    for (slot, rec) in cache.iter_records() {
+        result.total_records += 1;
+
         if let Some((h1_ok, h2_ok)) = verify_record_hashes(cache, slot, &rec) {
             if !h1_ok {
                 result.hash_mismatch_count += 1;
@@ -231,42 +268,16 @@ pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
         }
     }
 
-    // Check chain lengths
-    // Track which buckets we've already measured to avoid duplicates
-    let mut checked_buckets = vec![false; ht_entries as usize];
-    for i in 0..ht_entries {
-        if checked_buckets[i as usize] {
-            continue;
-        }
-        let slot = match cache.ht_entry(i) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        if slot == MC_INVALID_VAL32 {
-            continue;
-        }
-        checked_buckets[i as usize] = true;
+    result
+}
 
-        // We need to know which hash this chain is for — read the first record
-        let rec = match cache.read_rec(slot) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
+/// Run all verification checks (structural + hash integrity).
+pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
+    let mut result = verify_structure(cache);
+    let hash_result = verify_hashes(cache);
 
-        // Check chain via hash1 if this bucket matches
-        if rec.hash1 % ht_entries == i {
-            let len = chain_length(cache, i, rec.hash1);
-            if len > result.max_chain_length {
-                result.max_chain_length = len;
-            }
-            if len > LONG_CHAIN_THRESHOLD {
-                result.problems.push(CacheProblem::LongChain {
-                    bucket: i,
-                    length: len,
-                });
-            }
-        }
-    }
+    result.hash_mismatch_count = hash_result.hash_mismatch_count;
+    result.problems.extend(hash_result.problems);
 
     result
 }
