@@ -8,9 +8,11 @@
  * Usage: gen_cache <output_dir>
  *
  * Produces:
- *   <output_dir>/passwd.cache    — passwd cache with known entries
- *   <output_dir>/group.cache     — group cache with known entries
- *   <output_dir>/hashes.txt      — murmurhash3 reference values
+ *   <output_dir>/passwd.cache      — passwd cache with known entries
+ *   <output_dir>/group.cache       — group cache with known entries
+ *   <output_dir>/initgroups.cache  — initgroups cache with known entries
+ *   <output_dir>/sid.cache         — SID cache with known entries
+ *   <output_dir>/hashes.txt        — murmurhash3 reference values
  *
  * Copyright (C) 2026 Francois Cami <contribs@fcami.net>
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -382,6 +384,182 @@ static int generate_group_cache(const char *output_dir)
 }
 
 /* ------------------------------------------------------------------ */
+/* Initgroups cache builder                                           */
+/* ------------------------------------------------------------------ */
+
+static uint32_t build_initgr_payload(uint8_t *out, size_t out_size,
+                                     const char *name,
+                                     const char *unique_name,
+                                     uint32_t num_groups,
+                                     const uint32_t *gids)
+{
+    /*
+     * Layout of sss_mc_initgr_data + variable data:
+     *   struct sss_mc_initgr_data header (24 bytes)
+     *   uint32_t gids[num_groups]
+     *   char name\0unique_name\0
+     */
+    struct sss_mc_initgr_data initgr;
+    uint32_t gids_size = num_groups * sizeof(uint32_t);
+
+    size_t name_len = strlen(name) + 1;
+    size_t uname_len = strlen(unique_name) + 1;
+    uint32_t strs_len = name_len + uname_len;
+
+    /* strs pointer is relative to start of the data payload (after McRec) */
+    uint32_t strs_offset = sizeof(struct sss_mc_initgr_data) + gids_size;
+
+    initgr.unique_name = strs_offset + name_len; /* unique_name follows name */
+    initgr.name = strs_offset;                   /* name is first string */
+    initgr.strs = strs_offset;
+    initgr.strs_len = strs_len;
+    initgr.data_len = gids_size;
+    initgr.num_groups = num_groups;
+
+    uint32_t total = sizeof(struct sss_mc_initgr_data) + gids_size + strs_len;
+    if (total > out_size) {
+        fprintf(stderr, "Initgr payload too large\n");
+        exit(1);
+    }
+
+    uint8_t *p = out;
+    memcpy(p, &initgr, sizeof(initgr));
+    p += sizeof(initgr);
+    if (gids_size > 0) {
+        memcpy(p, gids, gids_size);
+        p += gids_size;
+    }
+    memcpy(p, name, name_len);
+    p += name_len;
+    memcpy(p, unique_name, uname_len);
+
+    return total;
+}
+
+static int generate_initgroups_cache(const char *output_dir)
+{
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/initgroups.cache", output_dir);
+
+    struct cache_builder b;
+    builder_init(&b, 256);
+
+    uint8_t payload[1024];
+    uint32_t plen;
+    uint32_t hash1, hash2;
+
+    /* Entry 1: testuser in groups 1000, 2000 — active */
+    uint32_t gids1[] = {1000, 2000};
+    plen = build_initgr_payload(payload, sizeof(payload),
+                                "testuser", "testuser@EXAMPLE.COM",
+                                2, gids1);
+    /* initgroups hashes by name (hash1) and unique_name (hash2) */
+    hash1 = mc_hash("testuser", strlen("testuser") + 1, b.seed);
+    hash2 = mc_hash("testuser@EXAMPLE.COM",
+                     strlen("testuser@EXAMPLE.COM") + 1, b.seed);
+    builder_add_record(&b, hash1, hash2, EXPIRE_FUTURE, payload, plen);
+
+    /* Entry 2: admin in groups 1000, 2000, 3000 — active */
+    uint32_t gids2[] = {1000, 2000, 3000};
+    plen = build_initgr_payload(payload, sizeof(payload),
+                                "admin", "admin@EXAMPLE.COM",
+                                3, gids2);
+    hash1 = mc_hash("admin", strlen("admin") + 1, b.seed);
+    hash2 = mc_hash("admin@EXAMPLE.COM",
+                     strlen("admin@EXAMPLE.COM") + 1, b.seed);
+    builder_add_record(&b, hash1, hash2, EXPIRE_FUTURE, payload, plen);
+
+    /* Entry 3: olduser — expired */
+    uint32_t gids3[] = {9999};
+    plen = build_initgr_payload(payload, sizeof(payload),
+                                "olduser", "olduser@EXAMPLE.COM",
+                                1, gids3);
+    hash1 = mc_hash("olduser", strlen("olduser") + 1, b.seed);
+    hash2 = mc_hash("olduser@EXAMPLE.COM",
+                     strlen("olduser@EXAMPLE.COM") + 1, b.seed);
+    builder_add_record(&b, hash1, hash2, EXPIRE_PAST, payload, plen);
+
+    int ret = builder_write_file(&b, path);
+    builder_free(&b);
+    printf("  initgroups.cache: 3 entries (2 active, 1 expired)\n");
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* SID cache builder                                                  */
+/* ------------------------------------------------------------------ */
+
+static uint32_t build_sid_payload(uint8_t *out, size_t out_size,
+                                  const char *sid_str, uint32_t id,
+                                  uint32_t id_type, uint32_t populated_by)
+{
+    struct sss_mc_sid_data sid;
+    uint32_t sid_len = strlen(sid_str) + 1;
+
+    sid.name = sizeof(struct sss_mc_sid_data);  /* SID string follows struct */
+    sid.type = id_type;
+    sid.id = id;
+    sid.populated_by = populated_by;
+    sid.sid_len = sid_len;
+
+    uint32_t total = sizeof(struct sss_mc_sid_data) + sid_len;
+    if (total > out_size) {
+        fprintf(stderr, "SID payload too large\n");
+        exit(1);
+    }
+
+    memcpy(out, &sid, sizeof(sid));
+    memcpy(out + sizeof(sid), sid_str, sid_len);
+    return total;
+}
+
+static int generate_sid_cache(const char *output_dir)
+{
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/sid.cache", output_dir);
+
+    struct cache_builder b;
+    builder_init(&b, 256);
+
+    uint8_t payload[1024];
+    uint32_t plen;
+    uint32_t hash1, hash2;
+    char idstr[11];
+
+    /* SID 1: user SID — active, populated by by_id() */
+    const char *sid1 = "S-1-5-21-123456789-123456789-123456789-1001";
+    plen = build_sid_payload(payload, sizeof(payload),
+                             sid1, 1001, 1 /* SSS_ID_TYPE_UID */, 0);
+    hash1 = mc_hash(sid1, strlen(sid1) + 1, b.seed);
+    snprintf(idstr, sizeof(idstr), "%u", 1001);
+    hash2 = mc_hash(idstr, strlen(idstr) + 1, b.seed);
+    builder_add_record(&b, hash1, hash2, EXPIRE_FUTURE, payload, plen);
+
+    /* SID 2: group SID — active, populated by by_gid() */
+    const char *sid2 = "S-1-5-21-123456789-123456789-123456789-2001";
+    plen = build_sid_payload(payload, sizeof(payload),
+                             sid2, 2001, 2 /* SSS_ID_TYPE_GID */, 1);
+    hash1 = mc_hash(sid2, strlen(sid2) + 1, b.seed);
+    snprintf(idstr, sizeof(idstr), "%u", 2001);
+    hash2 = mc_hash(idstr, strlen(idstr) + 1, b.seed);
+    builder_add_record(&b, hash1, hash2, EXPIRE_FUTURE, payload, plen);
+
+    /* SID 3: expired SID */
+    const char *sid3 = "S-1-5-21-123456789-123456789-123456789-9999";
+    plen = build_sid_payload(payload, sizeof(payload),
+                             sid3, 9999, 1, 0);
+    hash1 = mc_hash(sid3, strlen(sid3) + 1, b.seed);
+    snprintf(idstr, sizeof(idstr), "%u", 9999);
+    hash2 = mc_hash(idstr, strlen(idstr) + 1, b.seed);
+    builder_add_record(&b, hash1, hash2, EXPIRE_PAST, payload, plen);
+
+    int ret = builder_write_file(&b, path);
+    builder_free(&b);
+    printf("  sid.cache: 3 entries (2 active, 1 expired)\n");
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* Hash reference values                                              */
 /* ------------------------------------------------------------------ */
 
@@ -461,6 +639,8 @@ int main(int argc, char *argv[])
 
     if (generate_passwd_cache(output_dir) != 0) return 1;
     if (generate_group_cache(output_dir) != 0) return 1;
+    if (generate_initgroups_cache(output_dir) != 0) return 1;
+    if (generate_sid_cache(output_dir) != 0) return 1;
     if (generate_hash_reference(output_dir) != 0) return 1;
 
     printf("Done.\n");

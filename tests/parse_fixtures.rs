@@ -163,6 +163,141 @@ fn group_head_developers_with_members() {
     assert_eq!(strings[3], "bob");
 }
 
+// ---- initgroups cache tests ----
+
+fn open_initgroups(version: &str) -> CacheFile {
+    let path = fixtures_dir(version).join("initgroups.cache");
+    CacheFile::open(&path, CacheType::Initgroups)
+        .unwrap_or_else(|e| panic!("Failed to open {}: {e}. Run `just gen-fixtures {version}` first.", path.display()))
+}
+
+#[test]
+fn initgr_head_record_count() {
+    let cache = open_initgroups("head");
+    let records: Vec<_> = cache.iter_records().collect();
+    assert_eq!(records.len(), 3, "Expected 3 initgroups records");
+}
+
+#[test]
+fn initgr_head_testuser_entry() {
+    let cache = open_initgroups("head");
+    let (slot, rec) = cache.iter_records().next().expect("at least one record");
+    let data = cache.read_rec_data(slot, &rec).expect("valid record data");
+
+    assert!(data.len() >= std::mem::size_of::<McInitgrData>());
+    let initgr: McInitgrData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+    assert_eq!(initgr.num_groups, 2);
+
+    // Read GIDs
+    let gids_start = std::mem::size_of::<McInitgrData>();
+    let mut gids = Vec::new();
+    for i in 0..initgr.num_groups as usize {
+        let off = gids_start + i * 4;
+        let gid = u32::from_ne_bytes([
+            data[off], data[off + 1], data[off + 2], data[off + 3],
+        ]);
+        gids.push(gid);
+    }
+    assert_eq!(gids, vec![1000, 2000]);
+
+    // Read name from strs offset
+    let strs_offset = initgr.strs as usize;
+    assert!(strs_offset < data.len());
+    let strings = extract_strings(&data[strs_offset..]);
+    assert!(strings.iter().any(|s| s == "testuser"), "should contain 'testuser'");
+}
+
+#[test]
+fn initgr_head_admin_three_groups() {
+    let cache = open_initgroups("head");
+    let records: Vec<_> = cache.iter_records().collect();
+    assert!(records.len() >= 2);
+
+    let (slot, rec) = &records[1];
+    let data = cache.read_rec_data(*slot, rec).expect("valid record data");
+    let initgr: McInitgrData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+    assert_eq!(initgr.num_groups, 3);
+
+    let gids_start = std::mem::size_of::<McInitgrData>();
+    let mut gids = Vec::new();
+    for i in 0..initgr.num_groups as usize {
+        let off = gids_start + i * 4;
+        let gid = u32::from_ne_bytes([
+            data[off], data[off + 1], data[off + 2], data[off + 3],
+        ]);
+        gids.push(gid);
+    }
+    assert_eq!(gids, vec![1000, 2000, 3000]);
+}
+
+#[test]
+fn initgr_head_expired_entry() {
+    let cache = open_initgroups("head");
+    let records: Vec<_> = cache.iter_records().collect();
+    assert!(records.len() >= 3);
+    let (_slot, rec) = &records[2];
+    assert!(rec.expire < 2_000_000_000, "Third entry should be expired");
+}
+
+// ---- sid cache tests ----
+
+fn open_sid(version: &str) -> CacheFile {
+    let path = fixtures_dir(version).join("sid.cache");
+    CacheFile::open(&path, CacheType::Sid)
+        .unwrap_or_else(|e| panic!("Failed to open {}: {e}. Run `just gen-fixtures {version}` first.", path.display()))
+}
+
+#[test]
+fn sid_head_record_count() {
+    let cache = open_sid("head");
+    let records: Vec<_> = cache.iter_records().collect();
+    assert_eq!(records.len(), 3, "Expected 3 SID records");
+}
+
+#[test]
+fn sid_head_user_sid() {
+    let cache = open_sid("head");
+    let (slot, rec) = cache.iter_records().next().expect("at least one record");
+    let data = cache.read_rec_data(slot, &rec).expect("valid record data");
+
+    assert!(data.len() >= std::mem::size_of::<McSidData>());
+    let sid: McSidData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+    assert_eq!(sid.id, 1001);
+    assert_eq!(sid.id_type, 1); // SSS_ID_TYPE_UID
+    assert_eq!(sid.populated_by, 0); // by_id()
+
+    let sid_start = std::mem::size_of::<McSidData>();
+    let sid_end = sid_start + sid.sid_len as usize;
+    assert!(sid_end <= data.len());
+    let sid_str = std::str::from_utf8(&data[sid_start..sid_end])
+        .expect("valid UTF-8 SID")
+        .trim_end_matches('\0');
+    assert_eq!(sid_str, "S-1-5-21-123456789-123456789-123456789-1001");
+}
+
+#[test]
+fn sid_head_group_sid() {
+    let cache = open_sid("head");
+    let records: Vec<_> = cache.iter_records().collect();
+    assert!(records.len() >= 2);
+
+    let (slot, rec) = &records[1];
+    let data = cache.read_rec_data(*slot, rec).expect("valid record data");
+    let sid: McSidData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+    assert_eq!(sid.id, 2001);
+    assert_eq!(sid.id_type, 2); // SSS_ID_TYPE_GID
+    assert_eq!(sid.populated_by, 1); // by_gid()
+}
+
+#[test]
+fn sid_head_expired_entry() {
+    let cache = open_sid("head");
+    let records: Vec<_> = cache.iter_records().collect();
+    assert!(records.len() >= 3);
+    let (_slot, rec) = &records[2];
+    assert!(rec.expire < 2_000_000_000, "Third entry should be expired");
+}
+
 // ---- hash lookup tests ----
 
 #[test]
