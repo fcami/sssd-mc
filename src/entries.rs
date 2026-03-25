@@ -2,12 +2,14 @@
 //!
 //! These decouple consumers from the on-disk layout and unsafe reads.
 
+use serde::Serialize;
+
 use crate::errors::{McError, McResult};
 use crate::parsers::cache::extract_strings;
 use crate::types::*;
 
 /// A parsed passwd cache entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PasswdEntry {
     pub name: String,
     pub passwd: String,
@@ -20,7 +22,7 @@ pub struct PasswdEntry {
 }
 
 /// A parsed group cache entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GroupEntry {
     pub name: String,
     pub passwd: String,
@@ -30,7 +32,7 @@ pub struct GroupEntry {
 }
 
 /// A parsed initgroups cache entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InitgrEntry {
     pub name: String,
     pub unique_name: String,
@@ -39,7 +41,7 @@ pub struct InitgrEntry {
 }
 
 /// A parsed SID cache entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SidEntry {
     pub sid: String,
     pub id: u32,
@@ -49,7 +51,8 @@ pub struct SidEntry {
 }
 
 /// A typed cache entry (any of the four types).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum CacheEntry {
     Passwd(PasswdEntry),
     Group(GroupEntry),

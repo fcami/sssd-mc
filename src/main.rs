@@ -36,6 +36,9 @@ enum Commands {
         /// Cache type
         #[arg(short, long, value_parser = parse_cache_type)]
         r#type: CacheType,
+        /// Output as JSON (one object per line)
+        #[arg(long)]
+        json: bool,
     },
     /// Show cache file statistics
     Stats {
@@ -96,12 +99,24 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
             let cache = CacheFile::open(&path, r#type)?;
             display::write_header(&mut out, &cache).ok();
         }
-        Commands::Dump { path, r#type } => {
+        Commands::Dump { path, r#type, json } => {
             let cache = CacheFile::open(&path, r#type)?;
-            display::write_header(&mut out, &cache).ok();
-            writeln!(out).ok();
-            writeln!(out, "Records:").ok();
-            dump_records(&mut out, &cache, now).ok();
+            if json {
+                for (slot, rec) in cache.iter_records() {
+                    match cache.parse_entry(slot, &rec) {
+                        Ok(entry) => {
+                            serde_json::to_writer(&mut out, &entry).ok();
+                            writeln!(out).ok();
+                        }
+                        Err(e) => eprintln!("  [slot {slot}] error: {e}"),
+                    }
+                }
+            } else {
+                display::write_header(&mut out, &cache).ok();
+                writeln!(out).ok();
+                writeln!(out, "Records:").ok();
+                dump_records(&mut out, &cache, now).ok();
+            }
         }
         Commands::Stats { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
