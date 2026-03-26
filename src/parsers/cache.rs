@@ -2,14 +2,12 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Parser for SSSD mmap cache files.
+//! Parser for SSSD memory cache files.
 //!
 //! Opens a cache file (or reads from a byte slice), validates the header,
 //! and provides access to records via hash lookup or iteration.
 
 use std::path::Path;
-
-use memmap2::Mmap;
 
 use crate::{
     entries,
@@ -25,7 +23,7 @@ use crate::{
 /// Validated, read-only view of an SSSD memory cache file.
 #[derive(Debug)]
 pub struct CacheFile {
-    mmap: Mmap,
+    data: Vec<u8>,
     pub header: McHeader,
     pub cache_type: CacheType,
     /// File modification time as seconds since the UNIX epoch, if available.
@@ -36,46 +34,36 @@ pub struct CacheFile {
 const MC_HEADER_ALIGNED: usize = (size_of::<McHeader>() + 7) & !7;
 
 impl CacheFile {
-    /// Open and validate a cache file from disk.
+    /// Open and validate a cache file from the disk.
     pub fn open(path: &Path, cache_type: CacheType) -> McResult<Self> {
-        let file = std::fs::File::open(path).map_err(|e| McError::Open {
+        let data = std::fs::read(path).map_err(|e| McError::Open {
             path: path.to_path_buf(),
             source: e,
         })?;
 
-        let file_mtime = file
-            .metadata()
+        let file_mtime = std::fs::metadata(path)
             .ok()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
 
-        // SAFETY: we open read-only; the file may be concurrently modified
-        // by sssd_nss, but we only read and validate barriers.
-        let mmap = unsafe {
-            Mmap::map(&file).map_err(|e| McError::Open {
-                path: path.to_path_buf(),
-                source: e,
-            })?
-        };
-
-        Self::from_bytes(mmap, cache_type, file_mtime)
+        Self::from_bytes(data, cache_type, file_mtime)
     }
 
-    /// Parse from an already-mapped region.
-    fn from_bytes(mmap: Mmap, cache_type: CacheType, file_mtime: Option<u64>) -> McResult<Self> {
-        if mmap.len() < MC_HEADER_ALIGNED {
+    /// Parse from an already-allocated buffer.
+    fn from_bytes(data: Vec<u8>, cache_type: CacheType, file_mtime: Option<u64>) -> McResult<Self> {
+        if data.len() < MC_HEADER_ALIGNED {
             return Err(McError::TooSmall {
-                size: mmap.len(),
+                size: data.len(),
                 min: MC_HEADER_ALIGNED,
             });
         }
 
-        let header = read_header(&mmap);
-        validate_header(&header, mmap.len())?;
+        let header = read_header(&data);
+        validate_header(&header, data.len())?;
 
         Ok(Self {
-            mmap,
+            data,
             header,
             cache_type,
             file_mtime,
@@ -87,7 +75,7 @@ impl CacheFile {
     pub fn data_table(&self) -> &[u8] {
         let start = self.header.data_table as usize;
         let end = start + self.header.dt_size as usize;
-        &self.mmap[start..end]
+        &self.data[start..end]
     }
 
     /// Return the hash table as a slice of bytes.
@@ -95,7 +83,7 @@ impl CacheFile {
     pub fn hash_table(&self) -> &[u8] {
         let start = self.header.hash_table as usize;
         let end = start + self.header.ht_size as usize;
-        &self.mmap[start..end]
+        &self.data[start..end]
     }
 
     /// Number of hash table entries.
