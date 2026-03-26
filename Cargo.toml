@@ -1,10 +1,12 @@
 [package]
+authors = ["François Cami <contribs@fcami.net>"]
 name = "sssd-mc"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.71"
-description = "Read-only parser and inspector for SSSD memory cache files"
+edition = "2024"
 license = "GPL-3.0-or-later"
+publish = false
+rust-version = "1.91"
+description = "Read-only parser and inspector for SSSD memory cache files"
 
 [lib]
 name = "sssd_mc"
@@ -14,12 +16,43 @@ path = "src/lib.rs"
 name = "sssd-mc"
 path = "src/main.rs"
 
+# MSRV for clap is 1.85.0
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-memmap2 = "0.9"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "1"
+clap = { version = "4.6.0", features = ["derive"] }
+memmap2 = "0.9.10"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+unsafe_code = "warn"
+
+[lints.clippy]
+blanket_clippy_restriction_lints = "allow" # I like Extreme clippy
+cast_possible_truncation = "allow"
+fn_to_numeric_cast_any = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+pedantic = { priority = -1, level = "warn" }
+similar_names = "allow"
+
+[profile.dev]
+debug = 0
+
+# Set the default for dependencies.
+[profile.dev.package."*"]
+opt-level = 3
+
+# Set the settings for build scripts and proc-macros.
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true

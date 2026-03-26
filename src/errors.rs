@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: errors.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Error types for SSSD memory cache parsing.
 
 use std::path::PathBuf;
@@ -15,11 +19,17 @@ pub enum McError {
     #[error("cache file too small ({size} bytes, need at least {min} for header)")]
     TooSmall { size: usize, min: usize },
 
-    #[error("unsupported version {major}.{minor} (expected {}.{})",
-            crate::types::SSS_MC_MAJOR_VNO, crate::types::SSS_MC_MINOR_VNO)]
+    #[error(
+        "unsupported version {major}.{minor} (expected {}.{})",
+        crate::types::SSS_MC_MAJOR_VNO,
+        crate::types::SSS_MC_MINOR_VNO
+    )]
     UnsupportedVersion { major: u32, minor: u32 },
 
-    #[error("cache status is {status} (expected ALIVE={})", crate::types::SSS_MC_HEADER_ALIVE)]
+    #[error(
+        "cache status is {status} (expected ALIVE={})",
+        crate::types::SSS_MC_HEADER_ALIVE
+    )]
     BadStatus { status: u32 },
 
     #[error("header barrier mismatch (b1={b1:#010x}, b2={b2:#010x})")]
@@ -40,7 +50,9 @@ pub enum McError {
     #[error("record data too short ({actual} bytes, need at least {expected})")]
     DataTooShort { expected: usize, actual: usize },
 
-    #[error("table offset in header is out of file bounds: {field}={offset}, file_size={file_size}")]
+    #[error(
+        "table offset in header is out of file bounds: {field}={offset}, file_size={file_size}"
+    )]
     TableOutOfBounds {
         field: &'static str,
         offset: u32,

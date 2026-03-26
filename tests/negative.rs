@@ -1,10 +1,18 @@
+// SPDX-FileCopyrightText: negative.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Negative tests: malformed cache files that should produce meaningful errors.
 
 use std::io::Write;
 
-use sssd_mc::parsers::cache::CacheFile;
-use sssd_mc::types::*;
-
+use sssd_mc::{
+    parsers::cache::CacheFile,
+    types::{
+        CacheType, MC_INVALID_VAL32, MC_SLOT_SIZE, SSS_MC_HEADER_ALIVE, SSS_MC_HEADER_RECYCLED,
+        SSS_MC_HEADER_UNINIT, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO,
+    },
+};
 use tempfile::NamedTempFile;
 
 /// Helper: write bytes to a temp file and try to open as a cache.
@@ -16,14 +24,17 @@ fn try_open(data: &[u8], cache_type: CacheType) -> Result<CacheFile, sssd_mc::er
 }
 
 /// Helper: build a minimal valid header as bytes.
+#[allow(clippy::too_many_arguments)]
 fn make_header(
-    b1: u32, major: u32, minor: u32, status: u32, seed: u32,
-    dt_size: u32, ft_size: u32, ht_size: u32,
-    data_table: u32, free_table: u32, hash_table: u32, b2: u32,
+    b1: u32, major: u32, minor: u32, status: u32, seed: u32, dt_size: u32, ft_size: u32,
+    ht_size: u32, data_table: u32, free_table: u32, hash_table: u32, b2: u32,
 ) -> Vec<u8> {
     let mut buf = Vec::new();
-    for val in [b1, major, minor, status, seed, dt_size, ft_size, ht_size,
-                data_table, free_table, hash_table, 0u32 /* reserved */, b2] {
+    for val in [
+        b1, major, minor, status, seed, dt_size, ft_size, ht_size, data_table, free_table,
+        hash_table, 0u32, /* reserved */
+        b2,
+    ] {
         buf.extend_from_slice(&val.to_ne_bytes());
     }
     buf
@@ -33,7 +44,7 @@ fn make_header(
 fn make_valid_cache(num_ht_entries: u32, num_dt_slots: u32) -> Vec<u8> {
     let header_size = 56_u32; // 13 * 4, rounded to 8-byte align
     let ht_size = num_ht_entries * 4;
-    let ft_size = (num_dt_slots + 7) / 8;
+    let ft_size = num_dt_slots.div_ceil(8);
     let ft_aligned = (ft_size + 7) & !7;
     let dt_size = num_dt_slots * MC_SLOT_SIZE;
 
@@ -43,9 +54,18 @@ fn make_valid_cache(num_ht_entries: u32, num_dt_slots: u32) -> Vec<u8> {
     let total = dt_offset + dt_size;
 
     let header = make_header(
-        0xf000_0001, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, SSS_MC_HEADER_ALIVE,
-        0xdeadbeef, dt_size, ft_aligned, ht_size,
-        dt_offset, ft_offset, ht_offset, 0xf000_0001,
+        0xf000_0001,
+        SSS_MC_MAJOR_VNO,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_ALIVE,
+        0xDEAD_BEEF,
+        dt_size,
+        ft_aligned,
+        ht_size,
+        dt_offset,
+        ft_offset,
+        ht_offset,
+        0xf000_0001,
     );
 
     let mut buf = vec![0u8; total as usize];
@@ -68,7 +88,10 @@ fn empty_file() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("too small"), "Expected TooSmall error, got: {msg}");
+    assert!(
+        msg.contains("too small"),
+        "Expected TooSmall error, got: {msg}"
+    );
 }
 
 #[test]
@@ -78,42 +101,81 @@ fn truncated_header() {
     let result = try_open(&data, CacheType::Passwd);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("too small"), "Expected TooSmall error, got: {msg}");
+    assert!(
+        msg.contains("too small"),
+        "Expected TooSmall error, got: {msg}"
+    );
 }
 
 #[test]
 fn wrong_major_version() {
     let header = make_header(
-        0xf000_0001, 99, SSS_MC_MINOR_VNO, SSS_MC_HEADER_ALIVE,
-        0, 0, 0, 0, 0, 0, 0, 0xf000_0001,
+        0xf000_0001,
+        99,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_ALIVE,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0xf000_0001,
     );
     let mut buf = vec![0u8; 256];
     buf[..header.len()].copy_from_slice(&header);
     let result = try_open(&buf, CacheType::Passwd);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("version"), "Expected version error, got: {msg}");
+    assert!(
+        msg.contains("version"),
+        "Expected version error, got: {msg}"
+    );
 }
 
 #[test]
 fn wrong_minor_version() {
     let header = make_header(
-        0xf000_0001, SSS_MC_MAJOR_VNO, 99, SSS_MC_HEADER_ALIVE,
-        0, 0, 0, 0, 0, 0, 0, 0xf000_0001,
+        0xf000_0001,
+        SSS_MC_MAJOR_VNO,
+        99,
+        SSS_MC_HEADER_ALIVE,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0xf000_0001,
     );
     let mut buf = vec![0u8; 256];
     buf[..header.len()].copy_from_slice(&header);
     let result = try_open(&buf, CacheType::Passwd);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("version"), "Expected version error, got: {msg}");
+    assert!(
+        msg.contains("version"),
+        "Expected version error, got: {msg}"
+    );
 }
 
 #[test]
 fn status_uninit() {
     let header = make_header(
-        0xf000_0001, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, SSS_MC_HEADER_UNINIT,
-        0, 0, 0, 0, 0, 0, 0, 0xf000_0001,
+        0xf000_0001,
+        SSS_MC_MAJOR_VNO,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_UNINIT,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0xf000_0001,
     );
     let mut buf = vec![0u8; 256];
     buf[..header.len()].copy_from_slice(&header);
@@ -126,8 +188,18 @@ fn status_uninit() {
 #[test]
 fn status_recycled() {
     let header = make_header(
-        0xf000_0001, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, SSS_MC_HEADER_RECYCLED,
-        0, 0, 0, 0, 0, 0, 0, 0xf000_0001,
+        0xf000_0001,
+        SSS_MC_MAJOR_VNO,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_RECYCLED,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0xf000_0001,
     );
     let mut buf = vec![0u8; 256];
     buf[..header.len()].copy_from_slice(&header);
@@ -140,8 +212,17 @@ fn status_recycled() {
 #[test]
 fn barrier_mismatch() {
     let header = make_header(
-        0xf000_0001, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, SSS_MC_HEADER_ALIVE,
-        0, 0, 0, 0, 0, 0, 0,
+        0xf000_0001,
+        SSS_MC_MAJOR_VNO,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_ALIVE,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         0xf000_0002, // b2 != b1
     );
     let mut buf = vec![0u8; 256];
@@ -149,15 +230,27 @@ fn barrier_mismatch() {
     let result = try_open(&buf, CacheType::Passwd);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("barrier"), "Expected barrier error, got: {msg}");
+    assert!(
+        msg.contains("barrier"),
+        "Expected barrier error, got: {msg}"
+    );
 }
 
 #[test]
 fn invalid_barrier_value() {
     // b1 and b2 match but don't have the 0xf0 prefix
     let header = make_header(
-        0x1234_5678, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, SSS_MC_HEADER_ALIVE,
-        0, 0, 0, 0, 0, 0, 0,
+        0x1234_5678,
+        SSS_MC_MAJOR_VNO,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_ALIVE,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         0x1234_5678,
     );
     let mut buf = vec![0u8; 256];
@@ -165,24 +258,38 @@ fn invalid_barrier_value() {
     let result = try_open(&buf, CacheType::Passwd);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("barrier"), "Expected barrier error, got: {msg}");
+    assert!(
+        msg.contains("barrier"),
+        "Expected barrier error, got: {msg}"
+    );
 }
 
 #[test]
 fn data_table_out_of_bounds() {
     // Valid header but data_table offset points past file end
     let header = make_header(
-        0xf000_0001, SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, SSS_MC_HEADER_ALIVE,
-        0, 99999, 0, 0,
+        0xf000_0001,
+        SSS_MC_MAJOR_VNO,
+        SSS_MC_MINOR_VNO,
+        SSS_MC_HEADER_ALIVE,
+        0,
+        99999,
+        0,
+        0,
         99999, // data_table way past end
-        0, 0, 0xf000_0001,
+        0,
+        0,
+        0xf000_0001,
     );
     let mut buf = vec![0u8; 256];
     buf[..header.len()].copy_from_slice(&header);
     let result = try_open(&buf, CacheType::Passwd);
     assert!(result.is_err());
     let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("bounds"), "Expected out of bounds error, got: {msg}");
+    assert!(
+        msg.contains("bounds"),
+        "Expected out of bounds error, got: {msg}"
+    );
 }
 
 #[test]

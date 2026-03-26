@@ -1,14 +1,17 @@
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+// SPDX-FileCopyrightText: main.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use clap::{Parser, Subcommand};
-
-use sssd_mc::analysis;
-use sssd_mc::display;
-use sssd_mc::entries::CacheEntry;
-use sssd_mc::parsers::cache::CacheFile;
-use sssd_mc::types::CacheType;
+use sssd_mc::{
+    analysis, display, entries::CacheEntry, parsers::cache::CacheFile, types::CacheType,
+};
 
 #[derive(Parser)]
 #[command(name = "sssd-mc")]
@@ -86,7 +89,9 @@ fn parse_cache_type(s: &str) -> Result<CacheType, String> {
         "group" => Ok(CacheType::Group),
         "initgroups" => Ok(CacheType::Initgroups),
         "sid" => Ok(CacheType::Sid),
-        _ => Err(format!("unknown cache type '{s}', expected: passwd, group, initgroups, sid")),
+        _ => Err(format!(
+            "unknown cache type '{s}', expected: passwd, group, initgroups, sid"
+        )),
     }
 }
 
@@ -98,9 +103,9 @@ fn system_now() -> u64 {
 }
 
 /// Resolve the effective "now" for expiry calculations.
-/// Returns (effective_now, now_is_file_mtime).
-fn resolve_now(now_arg: &Option<String>, file_mtime: Option<u64>) -> (u64, bool) {
-    match now_arg.as_deref() {
+/// Returns (`effective_now`, `now_is_file_mtime`).
+fn resolve_now(now_arg: Option<&String>, file_mtime: Option<u64>) -> (u64, bool) {
+    match now_arg.map(String::as_str) {
         Some("system") => (system_now(), false),
         Some(s) => {
             if let Ok(epoch) = s.parse::<u64>() {
@@ -134,6 +139,7 @@ fn dump_records(w: &mut impl Write, cache: &CacheFile, now: u64) -> io::Result<(
 }
 
 /// Returns true if critical problems were found (for exit code).
+#[allow(clippy::too_many_lines)]
 fn run() -> Result<bool, sssd_mc::errors::McError> {
     let cli = Cli::parse();
     let sys_now = system_now();
@@ -143,12 +149,12 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
         Commands::Header { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
             display::write_header(&mut out, &cache).ok();
-            let (_, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
+            let (_, now_is_mtime) = resolve_now(cli.now.as_ref(), cache.file_mtime);
             display::write_time_context(&mut out, &cache, sys_now, now_is_mtime).ok();
         }
         Commands::Dump { path, r#type, json } => {
             let cache = CacheFile::open(&path, r#type)?;
-            let (now, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
+            let (now, now_is_mtime) = resolve_now(cli.now.as_ref(), cache.file_mtime);
             if json {
                 for (slot, rec) in cache.iter_records() {
                     match cache.parse_entry(slot, &rec) {
@@ -167,49 +173,54 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 dump_records(&mut out, &cache, now).ok();
             }
         }
-        Commands::Lookup { path, r#type, key, slot: by_slot, json } => {
+        Commands::Lookup {
+            path,
+            r#type,
+            key,
+            slot: by_slot,
+            json,
+        } => {
             let cache = CacheFile::open(&path, r#type)?;
-            let (now, _) = resolve_now(&cli.now, cache.file_mtime);
+            let (now, _) = resolve_now(cli.now.as_ref(), cache.file_mtime);
 
             let result = if by_slot {
-                let slot_num: u32 = key.parse().map_err(|_| {
-                    sssd_mc::errors::McError::OutOfBounds { offset: 0, size: 0 }
-                })?;
+                let slot_num: u32 = key
+                    .parse()
+                    .map_err(|_| sssd_mc::errors::McError::OutOfBounds { offset: 0, size: 0 })?;
                 let rec = cache.read_rec(slot_num)?;
-                cache.parse_entry(slot_num, &rec).ok().map(|e| (slot_num, e))
+                cache
+                    .parse_entry(slot_num, &rec)
+                    .ok()
+                    .map(|e| (slot_num, e))
             } else {
-                cache.lookup(&key, false)?
-                    .or(cache.lookup(&key, true)?)
+                cache.lookup(&key, false)?.or(cache.lookup(&key, true)?)
             };
 
-            match result {
-                Some((slot, entry)) => {
-                    if json {
-                        serde_json::to_writer_pretty(&mut out, &entry).ok();
-                        writeln!(out).ok();
-                    } else {
-                        match &entry {
-                            CacheEntry::Passwd(e) => display::write_passwd(&mut out, slot, e, now).ok(),
-                            CacheEntry::Group(e) => display::write_group(&mut out, slot, e, now).ok(),
-                            CacheEntry::Initgr(e) => display::write_initgr(&mut out, slot, e, now).ok(),
-                            CacheEntry::Sid(e) => display::write_sid(&mut out, slot, e, now).ok(),
-                        };
-                    }
+            if let Some((slot, entry)) = result {
+                if json {
+                    serde_json::to_writer_pretty(&mut out, &entry).ok();
+                    writeln!(out).ok();
+                } else {
+                    match &entry {
+                        CacheEntry::Passwd(e) => display::write_passwd(&mut out, slot, e, now).ok(),
+                        CacheEntry::Group(e) => display::write_group(&mut out, slot, e, now).ok(),
+                        CacheEntry::Initgr(e) => display::write_initgr(&mut out, slot, e, now).ok(),
+                        CacheEntry::Sid(e) => display::write_sid(&mut out, slot, e, now).ok(),
+                    };
                 }
-                None => {
-                    eprintln!("Not found: {key}");
-                    return Ok(true);
-                }
+            } else {
+                eprintln!("Not found: {key}");
+                return Ok(true);
             }
         }
         Commands::Stats { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
-            let (now, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
+            let (now, now_is_mtime) = resolve_now(cli.now.as_ref(), cache.file_mtime);
             display::write_stats(&mut out, &cache, now, sys_now, now_is_mtime).ok();
         }
         Commands::Verify { path, r#type } => {
             let cache = CacheFile::open(&path, r#type)?;
-            let (now, now_is_mtime) = resolve_now(&cli.now, cache.file_mtime);
+            let (now, now_is_mtime) = resolve_now(cli.now.as_ref(), cache.file_mtime);
             let result = analysis::verify_cache(&cache);
 
             writeln!(out, "Cache type:         {}", cache.cache_type).ok();
@@ -230,8 +241,12 @@ fn run() -> Result<bool, sssd_mc::errors::McError> {
                 }
                 writeln!(out).ok();
                 if result.unreachable_count > 0 {
-                    writeln!(out, "CRITICAL: {} record(s) unreachable by UID/GID lookup.",
-                             result.unreachable_count).ok();
+                    writeln!(
+                        out,
+                        "CRITICAL: {} record(s) unreachable by UID/GID lookup.",
+                        result.unreachable_count
+                    )
+                    .ok();
                     writeln!(out, "Affected users/groups may fail getpwuid()/getgrgid()").ok();
                     writeln!(out, "while getpwnam()/getgrnam() still works.").ok();
                     writeln!(out, "Workaround: sss_cache -E (flush all caches)").ok();

@@ -1,0 +1,27 @@
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+# Turned off because some editors otherwise remove trailing spaces within
+# multi-line string literals (intellij-rust/intellij-rust#5368).
+trim_trailing_whitespace = false
+
+[*.rs]
+indent_style = space
+indent_size = 4
+
+[*.md]
+indent_size = 2
+# double whitespace at end of line
+# denotes a line break in Markdown
+
+
+[*.toml]
+indent_size = 2
+
+# Ignore diffs/patches
+
+# Ignore generated files
+[*.lock]
+indent_size = unset

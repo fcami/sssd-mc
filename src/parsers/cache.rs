@@ -1,18 +1,26 @@
+// SPDX-FileCopyrightText: cache.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Parser for SSSD mmap cache files.
 //!
 //! Opens a cache file (or reads from a byte slice), validates the header,
 //! and provides access to records via hash lookup or iteration.
 
-use std::mem;
 use std::path::Path;
 
 use memmap2::Mmap;
 
-use crate::entries;
-use crate::entries::*;
-use crate::errors::{McError, McResult};
-use crate::murmurhash3::murmurhash3;
-use crate::types::*;
+use crate::{
+    entries,
+    entries::CacheEntry,
+    errors::{McError, McResult},
+    murmurhash3::murmurhash3,
+    types::{
+        CacheType, MC_INVALID_VAL32, MC_SLOT_SIZE, McHeader, McRec, SSS_MC_HEADER_ALIVE,
+        SSS_MC_MAJOR_VNO, SSS_MC_MINOR_VNO, valid_barrier,
+    },
+};
 
 /// Validated, read-only view of an SSSD memory cache file.
 #[derive(Debug)]
@@ -20,12 +28,12 @@ pub struct CacheFile {
     mmap: Mmap,
     pub header: McHeader,
     pub cache_type: CacheType,
-    /// File modification time as seconds since UNIX epoch, if available.
+    /// File modification time as seconds since the UNIX epoch, if available.
     pub file_mtime: Option<u64>,
 }
 
 /// Aligned header size (rounded up to 64-byte boundary).
-const MC_HEADER_ALIGNED: usize = (mem::size_of::<McHeader>() + 7) & !7;
+const MC_HEADER_ALIGNED: usize = (size_of::<McHeader>() + 7) & !7;
 
 impl CacheFile {
     /// Open and validate a cache file from disk.
@@ -35,7 +43,9 @@ impl CacheFile {
             source: e,
         })?;
 
-        let file_mtime = file.metadata().ok()
+        let file_mtime = file
+            .metadata()
+            .ok()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
@@ -61,7 +71,7 @@ impl CacheFile {
             });
         }
 
-        let header = read_header(&mmap)?;
+        let header = read_header(&mmap);
         validate_header(&header, mmap.len())?;
 
         Ok(Self {
@@ -73,6 +83,7 @@ impl CacheFile {
     }
 
     /// Return the raw data table slice.
+    #[must_use]
     pub fn data_table(&self) -> &[u8] {
         let start = self.header.data_table as usize;
         let end = start + self.header.dt_size as usize;
@@ -80,6 +91,7 @@ impl CacheFile {
     }
 
     /// Return the hash table as a slice of bytes.
+    #[must_use]
     pub fn hash_table(&self) -> &[u8] {
         let start = self.header.hash_table as usize;
         let end = start + self.header.ht_size as usize;
@@ -87,14 +99,15 @@ impl CacheFile {
     }
 
     /// Number of hash table entries.
+    #[must_use]
     pub fn ht_entries(&self) -> u32 {
-        self.header.ht_size / mem::size_of::<u32>() as u32
+        self.header.ht_size / size_of::<u32>() as u32
     }
 
     /// Read a hash table entry (slot index) at the given hash bucket.
     pub fn ht_entry(&self, bucket: u32) -> McResult<u32> {
         let ht = self.hash_table();
-        let offset = (bucket as usize) * mem::size_of::<u32>();
+        let offset = (bucket as usize) * size_of::<u32>();
         if offset + 4 > ht.len() {
             return Err(McError::OutOfBounds {
                 offset,
@@ -113,7 +126,7 @@ impl CacheFile {
     pub fn read_rec(&self, slot: u32) -> McResult<McRec> {
         let dt = self.data_table();
         let offset = (slot as usize) * MC_SLOT_SIZE as usize;
-        let rec_size = mem::size_of::<McRec>();
+        let rec_size = size_of::<McRec>();
 
         if offset + rec_size > dt.len() {
             return Err(McError::OutOfBounds {
@@ -128,11 +141,11 @@ impl CacheFile {
         Ok(rec)
     }
 
-    /// Read the record payload (data after the McRec header) at the given slot.
+    /// Read the record payload (data after the `McRec` header) at the given slot.
     pub fn read_rec_data(&self, slot: u32, rec: &McRec) -> McResult<&[u8]> {
         let dt = self.data_table();
         let rec_offset = (slot as usize) * MC_SLOT_SIZE as usize;
-        let data_start = rec_offset + mem::size_of::<McRec>();
+        let data_start = rec_offset + size_of::<McRec>();
         let data_end = rec_offset + rec.len as usize;
 
         if data_end > dt.len() {
@@ -147,6 +160,7 @@ impl CacheFile {
     }
 
     /// Iterate all valid (non-empty, barrier-consistent) records in the data table.
+    #[must_use]
     pub fn iter_records(&self) -> RecordIterator<'_> {
         RecordIterator {
             cache: self,
@@ -155,11 +169,13 @@ impl CacheFile {
     }
 
     /// Seed used for hash computations.
+    #[must_use]
     pub fn seed(&self) -> u32 {
         self.header.seed
     }
 
     /// Total number of slots in the data table.
+    #[must_use]
     pub fn total_slots(&self) -> u32 {
         self.header.dt_size / MC_SLOT_SIZE
     }
@@ -192,28 +208,35 @@ impl CacheFile {
                 rec.hash1 == hash
             };
 
-            if hash_matches {
-                if let Ok(entry) = self.parse_entry(slot, &rec) {
-                    // Verify the key actually matches (not just hash)
-                    let name_matches = match &entry {
-                        CacheEntry::Passwd(e) => {
-                            if use_hash2 { format!("{}", e.uid) == key }
-                            else { e.name == key }
+            if hash_matches && let Ok(entry) = self.parse_entry(slot, &rec) {
+                // Verify the key actually matches (not just hash)
+                let name_matches = match &entry {
+                    CacheEntry::Passwd(e) => {
+                        if use_hash2 {
+                            format!("{}", e.uid) == key
+                        } else {
+                            e.name == key
                         }
-                        CacheEntry::Group(e) => {
-                            if use_hash2 { format!("{}", e.gid) == key }
-                            else { e.name == key }
-                        }
-                        CacheEntry::Initgr(e) => e.name == key || e.unique_name == key,
-                        CacheEntry::Sid(e) => {
-                            if use_hash2 { format!("{}", e.id) == key }
-                            else { e.sid == key }
-                        }
-                    };
-
-                    if name_matches {
-                        return Ok(Some((slot, entry)));
                     }
+                    CacheEntry::Group(e) => {
+                        if use_hash2 {
+                            format!("{}", e.gid) == key
+                        } else {
+                            e.name == key
+                        }
+                    }
+                    CacheEntry::Initgr(e) => e.name == key || e.unique_name == key,
+                    CacheEntry::Sid(e) => {
+                        if use_hash2 {
+                            format!("{}", e.id) == key
+                        } else {
+                            e.sid == key
+                        }
+                    }
+                };
+
+                if name_matches {
+                    return Ok(Some((slot, entry)));
                 }
             }
 
@@ -249,19 +272,16 @@ pub struct RecordIterator<'a> {
     slot: u32,
 }
 
-impl<'a> Iterator for RecordIterator<'a> {
+impl Iterator for RecordIterator<'_> {
     type Item = (u32, McRec);
 
     fn next(&mut self) -> Option<Self::Item> {
         let total = self.cache.total_slots();
         while self.slot < total {
             let current = self.slot;
-            let rec = match self.cache.read_rec(current) {
-                Ok(r) => r,
-                Err(_) => {
-                    self.slot += 1;
-                    continue;
-                }
+            let Ok(rec) = self.cache.read_rec(current) else {
+                self.slot += 1;
+                continue;
             };
 
             // Skip empty/invalid slots
@@ -270,13 +290,13 @@ impl<'a> Iterator for RecordIterator<'a> {
                 continue;
             }
 
-            if rec.len == MC_INVALID_VAL32 || rec.len < mem::size_of::<McRec>() as u32 {
+            if rec.len == MC_INVALID_VAL32 || rec.len < size_of::<McRec>() as u32 {
                 self.slot += 1;
                 continue;
             }
 
             // Advance past all slots this record occupies
-            let slots_used = (rec.len + MC_SLOT_SIZE - 1) / MC_SLOT_SIZE;
+            let slots_used = rec.len.div_ceil(MC_SLOT_SIZE);
             self.slot = current + slots_used;
 
             return Some((current, rec));
@@ -287,11 +307,10 @@ impl<'a> Iterator for RecordIterator<'a> {
 
 // --- Internal helpers ---
 
-fn read_header(data: &[u8]) -> McResult<McHeader> {
-    let bytes = &data[..mem::size_of::<McHeader>()];
+fn read_header(data: &[u8]) -> McHeader {
+    let bytes = &data[..size_of::<McHeader>()];
     // SAFETY: McHeader is repr(C) and we checked length above.
-    let header: McHeader = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast()) };
-    Ok(header)
+    unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast()) }
 }
 
 fn validate_header(header: &McHeader, file_size: usize) -> McResult<()> {
@@ -339,6 +358,7 @@ fn validate_header(header: &McHeader, file_size: usize) -> McResult<()> {
 /// Uses lossy UTF-8 conversion so that non-UTF-8 data (e.g. legacy
 /// encodings, CJK, IDN) is preserved with replacement characters
 /// rather than silently dropped.
+#[must_use]
 pub fn extract_strings(buf: &[u8]) -> Vec<String> {
     buf.split(|&b| b == 0)
         .filter(|part| !part.is_empty())
@@ -389,7 +409,7 @@ mod tests {
 
     #[test]
     fn header_aligned_size() {
-        assert!(MC_HEADER_ALIGNED >= mem::size_of::<McHeader>());
+        assert!(MC_HEADER_ALIGNED >= size_of::<McHeader>());
         assert_eq!(MC_HEADER_ALIGNED % 8, 0);
     }
 }

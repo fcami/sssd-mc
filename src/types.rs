@@ -1,10 +1,14 @@
+// SPDX-FileCopyrightText: types.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Core types matching SSSD's mmap cache on-disk structures.
 //!
 //! These mirror the `#pragma pack(1)` structs from `src/util/mmap_cache.h`
 //! in the SSSD source. We use `repr(C)` here because all fields are naturally
 //! aligned (all u32 except one u64 that falls on an 8-byte boundary), so
 //! `repr(C)` produces the same layout as `packed` without the misaligned
-//! reference UB. The size_of assertions in tests verify this.
+//! reference UB. The `size_of` assertions in tests verify this.
 
 use std::fmt;
 
@@ -88,7 +92,7 @@ pub struct McGrpData {
 // --- Initgroups data (follows McRec) ---
 
 /// Initgroups record payload. Followed by `num_groups` x u32 GIDs,
-/// then strings for name and unique_name.
+/// then strings for name and `unique_name`.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct McInitgrData {
@@ -138,11 +142,13 @@ impl fmt::Display for CacheType {
 // --- Barrier validation ---
 
 /// Check that a barrier value has the expected form (0xf0xxxxxx).
+#[must_use]
 pub fn valid_barrier(val: u32) -> bool {
     (val & 0xff00_0000) == 0xf000_0000
 }
 
 /// Check that a slot index is within the data table bounds.
+#[must_use]
 pub fn slot_within_bounds(slot: u32, dt_size: u32) -> bool {
     slot < (dt_size / MC_SLOT_SIZE)
 }
@@ -150,36 +156,35 @@ pub fn slot_within_bounds(slot: u32, dt_size: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem;
 
     #[test]
     fn header_size() {
-        assert_eq!(mem::size_of::<McHeader>(), 52);
+        assert_eq!(size_of::<McHeader>(), 52);
     }
 
     #[test]
     fn record_size() {
-        assert_eq!(mem::size_of::<McRec>(), 40);
+        assert_eq!(size_of::<McRec>(), 40);
     }
 
     #[test]
     fn pwd_data_size() {
-        assert_eq!(mem::size_of::<McPwdData>(), 16);
+        assert_eq!(size_of::<McPwdData>(), 16);
     }
 
     #[test]
     fn grp_data_size() {
-        assert_eq!(mem::size_of::<McGrpData>(), 16);
+        assert_eq!(size_of::<McGrpData>(), 16);
     }
 
     #[test]
     fn initgr_data_size() {
-        assert_eq!(mem::size_of::<McInitgrData>(), 24);
+        assert_eq!(size_of::<McInitgrData>(), 24);
     }
 
     #[test]
     fn sid_data_size() {
-        assert_eq!(mem::size_of::<McSidData>(), 20);
+        assert_eq!(size_of::<McSidData>(), 20);
     }
 
     #[test]

@@ -1,12 +1,18 @@
+// SPDX-FileCopyrightText: entries.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Parsed, safe-to-use entry types extracted from raw cache records.
 //!
 //! These decouple consumers from the on-disk layout and unsafe reads.
 
 use serde::Serialize;
 
-use crate::errors::{McError, McResult};
-use crate::parsers::cache::extract_strings;
-use crate::types::*;
+use crate::{
+    errors::{McError, McResult},
+    parsers::cache::extract_strings,
+    types::{McGrpData, McInitgrData, McPwdData, McRec, McSidData},
+};
 
 /// A parsed passwd cache entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -62,14 +68,14 @@ pub enum CacheEntry {
 
 /// Parse a passwd entry from raw record data.
 pub fn parse_passwd(rec: &McRec, data: &[u8]) -> McResult<PasswdEntry> {
-    if data.len() < std::mem::size_of::<McPwdData>() {
+    if data.len() < size_of::<McPwdData>() {
         return Err(McError::DataTooShort {
-            expected: std::mem::size_of::<McPwdData>(),
+            expected: size_of::<McPwdData>(),
             actual: data.len(),
         });
     }
     let pwd: McPwdData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
-    let strs_start = std::mem::size_of::<McPwdData>();
+    let strs_start = size_of::<McPwdData>();
     let strs_end = strs_start + pwd.strs_len as usize;
     if strs_end > data.len() {
         return Err(McError::DataTooShort {
@@ -93,14 +99,14 @@ pub fn parse_passwd(rec: &McRec, data: &[u8]) -> McResult<PasswdEntry> {
 
 /// Parse a group entry from raw record data.
 pub fn parse_group(rec: &McRec, data: &[u8]) -> McResult<GroupEntry> {
-    if data.len() < std::mem::size_of::<McGrpData>() {
+    if data.len() < size_of::<McGrpData>() {
         return Err(McError::DataTooShort {
-            expected: std::mem::size_of::<McGrpData>(),
+            expected: size_of::<McGrpData>(),
             actual: data.len(),
         });
     }
     let grp: McGrpData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
-    let strs_start = std::mem::size_of::<McGrpData>();
+    let strs_start = size_of::<McGrpData>();
     let strs_end = strs_start + grp.strs_len as usize;
     if strs_end > data.len() {
         return Err(McError::DataTooShort {
@@ -114,30 +120,28 @@ pub fn parse_group(rec: &McRec, data: &[u8]) -> McResult<GroupEntry> {
         name: strings.first().cloned().unwrap_or_default(),
         passwd: strings.get(1).cloned().unwrap_or_default(),
         gid: grp.gid,
-        members: strings.get(2..).map(|s| s.to_vec()).unwrap_or_default(),
+        members: strings.get(2..).map(<[String]>::to_vec).unwrap_or_default(),
         expire: rec.expire,
     })
 }
 
 /// Parse an initgroups entry from raw record data.
 pub fn parse_initgr(rec: &McRec, data: &[u8]) -> McResult<InitgrEntry> {
-    if data.len() < std::mem::size_of::<McInitgrData>() {
+    if data.len() < size_of::<McInitgrData>() {
         return Err(McError::DataTooShort {
-            expected: std::mem::size_of::<McInitgrData>(),
+            expected: size_of::<McInitgrData>(),
             actual: data.len(),
         });
     }
     let initgr: McInitgrData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
 
-    let gids_start = std::mem::size_of::<McInitgrData>();
+    let gids_start = size_of::<McInitgrData>();
     let gids_end = gids_start + (initgr.num_groups as usize) * 4;
     let mut gids = Vec::new();
     if gids_end <= data.len() {
         for i in 0..initgr.num_groups as usize {
             let off = gids_start + i * 4;
-            let gid = u32::from_ne_bytes([
-                data[off], data[off + 1], data[off + 2], data[off + 3],
-            ]);
+            let gid = u32::from_ne_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
             gids.push(gid);
         }
     }
@@ -159,14 +163,14 @@ pub fn parse_initgr(rec: &McRec, data: &[u8]) -> McResult<InitgrEntry> {
 
 /// Parse a SID entry from raw record data.
 pub fn parse_sid(rec: &McRec, data: &[u8]) -> McResult<SidEntry> {
-    if data.len() < std::mem::size_of::<McSidData>() {
+    if data.len() < size_of::<McSidData>() {
         return Err(McError::DataTooShort {
-            expected: std::mem::size_of::<McSidData>(),
+            expected: size_of::<McSidData>(),
             actual: data.len(),
         });
     }
     let sid: McSidData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
-    let sid_start = std::mem::size_of::<McSidData>();
+    let sid_start = size_of::<McSidData>();
     let sid_end = sid_start + sid.sid_len as usize;
     let sid_str = if sid_end <= data.len() {
         String::from_utf8_lossy(&data[sid_start..sid_end])
@@ -188,12 +192,19 @@ pub fn parse_sid(rec: &McRec, data: &[u8]) -> McResult<SidEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::MC_INVALID_VAL32;
 
     fn make_rec(expire: u64) -> McRec {
         McRec {
-            b1: 0xf000_0001, len: 80, expire,
-            next1: MC_INVALID_VAL32, next2: MC_INVALID_VAL32,
-            hash1: 0, hash2: 0, padding: 0, b2: 0xf000_0001,
+            b1: 0xf000_0001,
+            len: 80,
+            expire,
+            next1: MC_INVALID_VAL32,
+            next2: MC_INVALID_VAL32,
+            hash1: 0,
+            hash2: 0,
+            padding: 0,
+            b2: 0xf000_0001,
         }
     }
 
@@ -202,16 +213,16 @@ mod tests {
         // Build a minimal passwd payload
         let strs = b"root\0x\0root\0/root\0/bin/bash\0";
         let pwd = McPwdData {
-            name: std::mem::size_of::<McPwdData>() as u32,
+            name: size_of::<McPwdData>() as u32,
             uid: 0,
             gid: 0,
             strs_len: strs.len() as u32,
         };
-        let mut data = vec![0u8; std::mem::size_of::<McPwdData>() + strs.len()];
+        let mut data = vec![0u8; size_of::<McPwdData>() + strs.len()];
         unsafe {
             std::ptr::write_unaligned(data.as_mut_ptr().cast(), pwd);
         }
-        data[std::mem::size_of::<McPwdData>()..].copy_from_slice(strs);
+        data[size_of::<McPwdData>()..].copy_from_slice(strs);
 
         let rec = make_rec(u64::MAX);
         let entry = parse_passwd(&rec, &data).unwrap();
@@ -225,13 +236,16 @@ mod tests {
     fn parse_passwd_expire_preserved() {
         let strs = b"old\0x\0old\0/home/old\0/bin/sh\0";
         let pwd = McPwdData {
-            name: std::mem::size_of::<McPwdData>() as u32,
-            uid: 999, gid: 999,
+            name: size_of::<McPwdData>() as u32,
+            uid: 999,
+            gid: 999,
             strs_len: strs.len() as u32,
         };
-        let mut data = vec![0u8; std::mem::size_of::<McPwdData>() + strs.len()];
-        unsafe { std::ptr::write_unaligned(data.as_mut_ptr().cast(), pwd); }
-        data[std::mem::size_of::<McPwdData>()..].copy_from_slice(strs);
+        let mut data = vec![0u8; size_of::<McPwdData>() + strs.len()];
+        unsafe {
+            std::ptr::write_unaligned(data.as_mut_ptr().cast(), pwd);
+        }
+        data[size_of::<McPwdData>()..].copy_from_slice(strs);
 
         let rec = make_rec(500);
         let entry = parse_passwd(&rec, &data).unwrap();

@@ -1,18 +1,24 @@
+// SPDX-FileCopyrightText: analysis.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Cache integrity analysis.
 //!
 //! Checks for structural issues in SSSD memory cache files,
 //! including hash chain reachability problems that can cause
 //! lookup failures.
 
-use crate::murmurhash3::murmurhash3;
-use crate::parsers::cache::CacheFile;
-use crate::types::*;
+use crate::{
+    murmurhash3::murmurhash3,
+    parsers::cache::CacheFile,
+    types::{CacheType, MC_INVALID_VAL32, McGrpData, McPwdData, McRec},
+};
 
 /// A problem found during cache verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheProblem {
     /// Record is unreachable via its secondary hash (hash2) chain walk.
-    /// Indicates cache corruption (e.g. from concurrent access, crash
+    /// Indicates cache corruption (e.g., from concurrent access, crash
     /// during update, or record overlap). Lookups by UID/GID may fail.
     UnreachableByHash2 {
         slot: u32,
@@ -27,38 +33,31 @@ pub enum CacheProblem {
 
     /// Record's hash1 and hash2 are the same bucket index.
     /// SSSD stores bucket indices (not raw hashes), so when hash1 == hash2
-    /// the lookup always follows the correctly-linked next1 chain.
+    /// the lookup always follows the correctly linked next1 chain.
     /// This is informational only — not a bug.
-    SameBucketHashes {
-        slot: u32,
-        hash1: u32,
-        bucket: u32,
-    },
+    SameBucketHashes { slot: u32, hash1: u32, bucket: u32 },
 
     /// Record has inconsistent barriers.
-    BarrierMismatch {
-        slot: u32,
-        b1: u32,
-        b2: u32,
-    },
+    BarrierMismatch { slot: u32, b1: u32, b2: u32 },
 
     /// Hash chain is longer than expected, suggesting degraded performance.
-    LongChain {
-        bucket: u32,
-        length: u32,
-    },
+    LongChain { bucket: u32, length: u32 },
 
     /// Record's stored hash doesn't match recomputed hash from its data.
-    HashMismatch {
-        slot: u32,
-        which: &'static str,
-    },
+    HashMismatch { slot: u32, which: &'static str },
 }
 
 impl std::fmt::Display for CacheProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnreachableByHash2 { slot, hash1, hash2, bucket, name, id } => {
+            Self::UnreachableByHash2 {
+                slot,
+                hash1,
+                hash2,
+                bucket,
+                name,
+                id,
+            } => {
                 write!(f, "CRITICAL: record at slot {slot}")?;
                 if let Some(n) = name {
                     write!(f, " ({n}")?;
@@ -67,30 +66,46 @@ impl std::fmt::Display for CacheProblem {
                     }
                     write!(f, ")")?;
                 }
-                write!(f, " unreachable via hash2 \
+                write!(
+                    f,
+                    " unreachable via hash2 \
                        (hash1={hash1:#x} hash2={hash2:#x} bucket={bucket}) — \
-                       UID/GID lookup will fail")
+                       UID/GID lookup will fail"
+                )
             }
-            Self::SameBucketHashes { slot, hash1, bucket } => {
-                write!(f, "INFO: record at slot {slot} has hash1=hash2={hash1:#x} \
-                       (bucket {bucket}) — harmless, lookups use same chain")
+            Self::SameBucketHashes {
+                slot,
+                hash1,
+                bucket,
+            } => {
+                write!(
+                    f,
+                    "INFO: record at slot {slot} has hash1=hash2={hash1:#x} \
+                       (bucket {bucket}) — harmless, lookups use the same chain"
+                )
             }
             Self::BarrierMismatch { slot, b1, b2 } => {
-                write!(f, "ERROR: record at slot {slot} has barrier mismatch \
-                       (b1={b1:#010x} b2={b2:#010x})")
+                write!(
+                    f,
+                    "ERROR: record at slot {slot} has barrier mismatch \
+                       (b1={b1:#010x} b2={b2:#010x})"
+                )
             }
             Self::LongChain { bucket, length } => {
                 write!(f, "INFO: bucket {bucket} has chain length {length}")
             }
             Self::HashMismatch { slot, which } => {
-                write!(f, "ERROR: record at slot {slot} has {which} mismatch \
-                       (stored hash doesn't match recomputed hash from data)")
+                write!(
+                    f,
+                    "ERROR: record at slot {slot} has {which} mismatch \
+                       (stored hash doesn't match recomputed hash from data)"
+                )
             }
         }
     }
 }
 
-/// Result of a full cache verification.
+/// Result of full cache verification.
 #[derive(Debug, Default)]
 pub struct VerifyResult {
     pub problems: Vec<CacheProblem>,
@@ -110,9 +125,8 @@ const LONG_CHAIN_THRESHOLD: u32 = 10;
 /// client side: at each record, if `rec->hash1 == hash` follow `next1`,
 /// if `rec->hash2 == hash` follow `next2`.
 fn is_reachable_by_hash(cache: &CacheFile, target_slot: u32, bucket: u32, hash: u32) -> bool {
-    let mut slot = match cache.ht_entry(bucket) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(mut slot) = cache.ht_entry(bucket) else {
+        return false;
     };
 
     let mut visited = 0u32;
@@ -123,9 +137,8 @@ fn is_reachable_by_hash(cache: &CacheFile, target_slot: u32, bucket: u32, hash: 
             return true;
         }
 
-        let rec = match cache.read_rec(slot) {
-            Ok(r) => r,
-            Err(_) => return false,
+        let Ok(rec) = cache.read_rec(slot) else {
+            return false;
         };
 
         // Follow the chain the same way SSSD's client does
@@ -134,8 +147,8 @@ fn is_reachable_by_hash(cache: &CacheFile, target_slot: u32, bucket: u32, hash: 
         } else if rec.hash2 == hash {
             slot = rec.next2;
         } else {
-            // Record in chain doesn't match this hash at all —
-            // chain is corrupt or we followed the wrong path
+            // Record in the chain doesn't match this hash at all —
+            // the chain is corrupt, or we followed the wrong path
             return false;
         }
 
@@ -148,9 +161,8 @@ fn is_reachable_by_hash(cache: &CacheFile, target_slot: u32, bucket: u32, hash: 
 /// Measure the chain length starting from a hash table bucket,
 /// following records that have `hash` as either hash1 or hash2.
 fn chain_length(cache: &CacheFile, bucket: u32, hash: u32) -> u32 {
-    let mut slot = match cache.ht_entry(bucket) {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(mut slot) = cache.ht_entry(bucket) else {
+        return 0;
     };
 
     let mut length = 0u32;
@@ -158,10 +170,7 @@ fn chain_length(cache: &CacheFile, bucket: u32, hash: u32) -> u32 {
 
     while slot != MC_INVALID_VAL32 && length < max {
         length += 1;
-        let rec = match cache.read_rec(slot) {
-            Ok(r) => r,
-            Err(_) => break,
-        };
+        let Ok(rec) = cache.read_rec(slot) else { break };
 
         if rec.hash1 == hash {
             slot = rec.next1;
@@ -179,6 +188,7 @@ fn chain_length(cache: &CacheFile, bucket: u32, hash: u32) -> u32 {
 ///
 /// This does not read record payloads — it only examines record headers
 /// and hash table structure.
+#[must_use]
 pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
     let mut result = VerifyResult::default();
     let ht_entries = cache.ht_entries();
@@ -211,14 +221,15 @@ pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
             result.unreachable_count += 1;
 
             // Try to extract name and ID for actionable output
-            let (name, id) = cache.parse_entry(slot, &rec)
-                .map(|entry| match entry {
-                    crate::entries::CacheEntry::Passwd(e) => (Some(e.name), Some(e.uid)),
-                    crate::entries::CacheEntry::Group(e) => (Some(e.name), Some(e.gid)),
-                    crate::entries::CacheEntry::Initgr(e) => (Some(e.name), None),
-                    crate::entries::CacheEntry::Sid(e) => (Some(e.sid), Some(e.id)),
-                })
-                .unwrap_or((None, None));
+            let (name, id) =
+                cache
+                    .parse_entry(slot, &rec)
+                    .map_or((None, None), |entry| match entry {
+                        crate::entries::CacheEntry::Passwd(e) => (Some(e.name), Some(e.uid)),
+                        crate::entries::CacheEntry::Group(e) => (Some(e.name), Some(e.gid)),
+                        crate::entries::CacheEntry::Initgr(e) => (Some(e.name), None),
+                        crate::entries::CacheEntry::Sid(e) => (Some(e.sid), Some(e.id)),
+                    });
 
             result.problems.push(CacheProblem::UnreachableByHash2 {
                 slot,
@@ -237,18 +248,16 @@ pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
         if checked_buckets[i as usize] {
             continue;
         }
-        let slot = match cache.ht_entry(i) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(slot) = cache.ht_entry(i) else {
+            continue;
         };
         if slot == MC_INVALID_VAL32 {
             continue;
         }
         checked_buckets[i as usize] = true;
 
-        let rec = match cache.read_rec(slot) {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Ok(rec) = cache.read_rec(slot) else {
+            continue;
         };
 
         if rec.hash1 % ht_entries == i {
@@ -270,6 +279,7 @@ pub fn verify_structure(cache: &CacheFile) -> VerifyResult {
 
 /// Check hash integrity: recompute hashes from record data and compare
 /// against stored values. Only supported for passwd and group caches.
+#[must_use]
 pub fn verify_hashes(cache: &CacheFile) -> VerifyResult {
     let mut result = VerifyResult::default();
 
@@ -297,7 +307,8 @@ pub fn verify_hashes(cache: &CacheFile) -> VerifyResult {
     result
 }
 
-/// Run all verification checks (structural + hash integrity).
+/// Run all verification checks (structural and hash integrity).
+#[must_use]
 pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
     let mut result = verify_structure(cache);
     let hash_result = verify_hashes(cache);
@@ -311,24 +322,21 @@ pub fn verify_cache(cache: &CacheFile) -> VerifyResult {
 /// Recompute hashes for a record's data and verify they match the stored
 /// hash1/hash2 values. Requires knowing the cache type and seed.
 ///
-/// For passwd: hash1 = hash(name\0), hash2 = hash(uid_string\0)
-/// For group: hash1 = hash(name\0), hash2 = hash(gid_string\0)
-pub fn verify_record_hashes(
-    cache: &CacheFile,
-    slot: u32,
-    rec: &McRec,
-) -> Option<(bool, bool)> {
+/// For passwd: hash1 = hash(name\0), hash2 = `hash(uid_string\0)`
+/// For group: hash1 = hash(name\0), hash2 = `hash(gid_string\0)`
+#[must_use]
+pub fn verify_record_hashes(cache: &CacheFile, slot: u32, rec: &McRec) -> Option<(bool, bool)> {
     let data = cache.read_rec_data(slot, rec).ok()?;
     let seed = cache.seed();
     let ht_entries = cache.ht_entries();
 
     match cache.cache_type {
         CacheType::Passwd => {
-            if data.len() < std::mem::size_of::<McPwdData>() {
+            if data.len() < size_of::<McPwdData>() {
                 return None;
             }
             let pwd: McPwdData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
-            let strs_start = std::mem::size_of::<McPwdData>();
+            let strs_start = size_of::<McPwdData>();
             let strs = &data[strs_start..];
             // Find name (first null-terminated string)
             let name_end = strs.iter().position(|&b| b == 0)?;
@@ -343,11 +351,11 @@ pub fn verify_record_hashes(
             Some((hash1_ok, hash2_ok))
         }
         CacheType::Group => {
-            if data.len() < std::mem::size_of::<McGrpData>() {
+            if data.len() < size_of::<McGrpData>() {
                 return None;
             }
             let grp: McGrpData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
-            let strs_start = std::mem::size_of::<McGrpData>();
+            let strs_start = size_of::<McGrpData>();
             let strs = &data[strs_start..];
             let name_end = strs.iter().position(|&b| b == 0)?;
             let name_with_null = &strs[..=name_end];
@@ -371,8 +379,12 @@ mod tests {
     #[test]
     fn problem_display() {
         let p = CacheProblem::UnreachableByHash2 {
-            slot: 5, hash1: 0x10, hash2: 0x20, bucket: 3,
-            name: Some("testuser".to_string()), id: Some(1000),
+            slot: 5,
+            hash1: 0x10,
+            hash2: 0x20,
+            bucket: 3,
+            name: Some("testuser".to_string()),
+            id: Some(1000),
         };
         let msg = format!("{p}");
         assert!(msg.contains("CRITICAL"));
@@ -383,7 +395,9 @@ mod tests {
     #[test]
     fn problem_same_bucket_display() {
         let p = CacheProblem::SameBucketHashes {
-            slot: 2, hash1: 0x40, bucket: 0,
+            slot: 2,
+            hash1: 0x40,
+            bucket: 0,
         };
         let msg = format!("{p}");
         assert!(msg.contains("INFO"));

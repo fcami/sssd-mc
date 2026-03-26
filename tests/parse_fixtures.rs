@@ -1,12 +1,18 @@
+// SPDX-FileCopyrightText: parse_fixtures.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Integration tests that parse C-generated cache fixtures and verify contents.
 //!
-//! Uses CacheFile::parse_entry() — no unsafe code in tests.
+//! Uses `CacheFile::parse_entry()` — no unsafe code in tests.
 
 use std::path::PathBuf;
 
-use sssd_mc::entries::*;
-use sssd_mc::parsers::cache::CacheFile;
-use sssd_mc::types::*;
+use sssd_mc::{
+    entries::{CacheEntry, GroupEntry, InitgrEntry, PasswdEntry, SidEntry},
+    parsers::cache::CacheFile,
+    types::{CacheType, MC_INVALID_VAL32, SSS_MC_HEADER_ALIVE, valid_barrier},
+};
 
 fn fixtures_dir(version: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -19,18 +25,21 @@ fn fixtures_dir(version: &str) -> PathBuf {
 
 fn open_passwd(version: &str) -> CacheFile {
     let path = fixtures_dir(version).join("passwd.cache");
-    CacheFile::open(&path, CacheType::Passwd)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}. Run `just gen-fixtures {version}` first.", path.display()))
+    CacheFile::open(&path, CacheType::Passwd).unwrap_or_else(|e| {
+        panic!(
+            "Failed to open {}: {e}. Run `just gen-fixtures {version}` first.",
+            path.display()
+        )
+    })
 }
 
 fn passwd_entries(version: &str) -> Vec<(u32, PasswdEntry)> {
     let cache = open_passwd(version);
-    cache.iter_records()
-        .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec) {
-                Ok(CacheEntry::Passwd(e)) => Some((slot, e)),
-                _ => None,
-            }
+    cache
+        .iter_records()
+        .filter_map(|(slot, rec)| match cache.parse_entry(slot, &rec) {
+            Ok(CacheEntry::Passwd(e)) => Some((slot, e)),
+            _ => None,
         })
         .collect()
 }
@@ -41,7 +50,7 @@ fn passwd_head_header_valid() {
     assert_eq!(cache.header.major_vno, 1);
     assert_eq!(cache.header.minor_vno, 1);
     assert_eq!(cache.header.status, SSS_MC_HEADER_ALIVE);
-    assert_eq!(cache.header.seed, 0xdeadbeef);
+    assert_eq!(cache.header.seed, 0xDEAD_BEEF);
 }
 
 #[test]
@@ -110,18 +119,21 @@ fn passwd_head_hash_chain() {
 
 fn open_group(version: &str) -> CacheFile {
     let path = fixtures_dir(version).join("group.cache");
-    CacheFile::open(&path, CacheType::Group)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}. Run `just gen-fixtures {version}` first.", path.display()))
+    CacheFile::open(&path, CacheType::Group).unwrap_or_else(|e| {
+        panic!(
+            "Failed to open {}: {e}. Run `just gen-fixtures {version}` first.",
+            path.display()
+        )
+    })
 }
 
 fn group_entries(version: &str) -> Vec<(u32, GroupEntry)> {
     let cache = open_group(version);
-    cache.iter_records()
-        .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec) {
-                Ok(CacheEntry::Group(e)) => Some((slot, e)),
-                _ => None,
-            }
+    cache
+        .iter_records()
+        .filter_map(|(slot, rec)| match cache.parse_entry(slot, &rec) {
+            Ok(CacheEntry::Group(e)) => Some((slot, e)),
+            _ => None,
         })
         .collect()
 }
@@ -155,18 +167,21 @@ fn group_head_developers_with_members() {
 
 fn open_initgroups(version: &str) -> CacheFile {
     let path = fixtures_dir(version).join("initgroups.cache");
-    CacheFile::open(&path, CacheType::Initgroups)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}. Run `just gen-fixtures {version}` first.", path.display()))
+    CacheFile::open(&path, CacheType::Initgroups).unwrap_or_else(|e| {
+        panic!(
+            "Failed to open {}: {e}. Run `just gen-fixtures {version}` first.",
+            path.display()
+        )
+    })
 }
 
 fn initgr_entries(version: &str) -> Vec<(u32, InitgrEntry)> {
     let cache = open_initgroups(version);
-    cache.iter_records()
-        .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec) {
-                Ok(CacheEntry::Initgr(e)) => Some((slot, e)),
-                _ => None,
-            }
+    cache
+        .iter_records()
+        .filter_map(|(slot, rec)| match cache.parse_entry(slot, &rec) {
+            Ok(CacheEntry::Initgr(e)) => Some((slot, e)),
+            _ => None,
         })
         .collect()
 }
@@ -204,18 +219,21 @@ fn initgr_head_expired_entry() {
 
 fn open_sid(version: &str) -> CacheFile {
     let path = fixtures_dir(version).join("sid.cache");
-    CacheFile::open(&path, CacheType::Sid)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}. Run `just gen-fixtures {version}` first.", path.display()))
+    CacheFile::open(&path, CacheType::Sid).unwrap_or_else(|e| {
+        panic!(
+            "Failed to open {}: {e}. Run `just gen-fixtures {version}` first.",
+            path.display()
+        )
+    })
 }
 
 fn sid_entries(version: &str) -> Vec<(u32, SidEntry)> {
     let cache = open_sid(version);
-    cache.iter_records()
-        .filter_map(|(slot, rec)| {
-            match cache.parse_entry(slot, &rec) {
-                Ok(CacheEntry::Sid(e)) => Some((slot, e)),
-                _ => None,
-            }
+    cache
+        .iter_records()
+        .filter_map(|(slot, rec)| match cache.parse_entry(slot, &rec) {
+            Ok(CacheEntry::Sid(e)) => Some((slot, e)),
+            _ => None,
         })
         .collect()
 }

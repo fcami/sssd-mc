@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: display.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Display formatting for cache entries and headers.
 //!
 //! All functions write to a `&mut impl Write` so they can target
@@ -6,9 +10,11 @@
 
 use std::io::Write;
 
-use crate::entries::*;
-use crate::parsers::cache::CacheFile;
-use crate::types::*;
+use crate::{
+    entries::{GroupEntry, InitgrEntry, PasswdEntry, SidEntry},
+    parsers::cache::CacheFile,
+    types::{MC_INVALID_VAL32, SSS_MC_HEADER_ALIVE, SSS_MC_HEADER_RECYCLED, SSS_MC_HEADER_UNINIT},
+};
 
 fn expired_tag(expire: u64, now: u64) -> &'static str {
     if expire < now { " [EXPIRED]" } else { "" }
@@ -28,7 +34,12 @@ fn format_epoch(epoch: u64) -> String {
 
     let mut year = 1970u64;
     loop {
-        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
+        let days_in_year =
+            if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
+                366
+            } else {
+                365
+            };
         if days < days_in_year {
             break;
         }
@@ -36,7 +47,7 @@ fn format_epoch(epoch: u64) -> String {
         year += 1;
     }
 
-    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let is_leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let mut month = 0u64;
     for (i, &md) in MONTH_DAYS.iter().enumerate() {
         let d = if i == 1 && is_leap { md + 1 } else { md };
@@ -53,7 +64,9 @@ fn format_epoch(epoch: u64) -> String {
 
 /// Write the timestamp header lines showing file mtime, current time,
 /// and which is used for expiry.
-pub fn write_time_context(w: &mut impl Write, cache: &CacheFile, system_now: u64, now_is_file_mtime: bool) -> std::io::Result<()> {
+pub fn write_time_context(
+    w: &mut impl Write, cache: &CacheFile, system_now: u64, now_is_file_mtime: bool,
+) -> std::io::Result<()> {
     if let Some(mtime) = cache.file_mtime {
         let label = if now_is_file_mtime {
             " (used for expiry calculations)"
@@ -62,10 +75,10 @@ pub fn write_time_context(w: &mut impl Write, cache: &CacheFile, system_now: u64
         };
         writeln!(w, "File modified:  {}{label}", format_epoch(mtime))?;
     }
-    let now_label = if !now_is_file_mtime {
-        " (used for expiry calculations)"
-    } else {
+    let now_label = if now_is_file_mtime {
         ""
+    } else {
+        " (used for expiry calculations)"
     };
     writeln!(w, "Current time:   {}{now_label}", format_epoch(system_now))
 }
@@ -82,38 +95,74 @@ pub fn write_header(w: &mut impl Write, cache: &CacheFile) -> std::io::Result<()
     writeln!(w, "Version:        {}.{}", h.major_vno, h.minor_vno)?;
     writeln!(w, "Status:         {} ({status_str})", h.status)?;
     writeln!(w, "Seed:           {:#010x}", h.seed)?;
-    writeln!(w, "Data table:     offset={:#010x} size={}", h.data_table, h.dt_size)?;
-    writeln!(w, "Free table:     offset={:#010x} size={}", h.free_table, h.ft_size)?;
-    writeln!(w, "Hash table:     offset={:#010x} size={} ({} buckets)",
-             h.hash_table, h.ht_size, cache.ht_entries())?;
+    writeln!(
+        w,
+        "Data table:     offset={:#010x} size={}",
+        h.data_table, h.dt_size
+    )?;
+    writeln!(
+        w,
+        "Free table:     offset={:#010x} size={}",
+        h.free_table, h.ft_size
+    )?;
+    writeln!(
+        w,
+        "Hash table:     offset={:#010x} size={} ({} buckets)",
+        h.hash_table,
+        h.ht_size,
+        cache.ht_entries()
+    )?;
     writeln!(w, "Barriers:       b1={:#010x} b2={:#010x}", h.b1, h.b2)?;
     writeln!(w, "Total slots:    {}", cache.total_slots())
 }
 
-pub fn write_passwd(w: &mut impl Write, slot: u32, entry: &PasswdEntry, now: u64) -> std::io::Result<()> {
+pub fn write_passwd(
+    w: &mut impl Write, slot: u32, entry: &PasswdEntry, now: u64,
+) -> std::io::Result<()> {
     let tag = expired_tag(entry.expire, now);
-    writeln!(w, "  [slot {slot:>5}] {} uid={} gid={} expire={}{tag}",
-             entry.name, entry.uid, entry.gid, entry.expire)?;
-    writeln!(w, "              gecos={} dir={} shell={}",
-             entry.gecos, entry.dir, entry.shell)
+    writeln!(
+        w,
+        "  [slot {slot:>5}] {} uid={} gid={} expire={}{tag}",
+        entry.name, entry.uid, entry.gid, entry.expire
+    )?;
+    writeln!(
+        w,
+        "              gecos={} dir={} shell={}",
+        entry.gecos, entry.dir, entry.shell
+    )
 }
 
-pub fn write_group(w: &mut impl Write, slot: u32, entry: &GroupEntry, now: u64) -> std::io::Result<()> {
+pub fn write_group(
+    w: &mut impl Write, slot: u32, entry: &GroupEntry, now: u64,
+) -> std::io::Result<()> {
     let tag = expired_tag(entry.expire, now);
-    writeln!(w, "  [slot {slot:>5}] {} gid={} members={} expire={}{tag}",
-             entry.name, entry.gid, entry.members.len(), entry.expire)?;
+    writeln!(
+        w,
+        "  [slot {slot:>5}] {} gid={} members={} expire={}{tag}",
+        entry.name,
+        entry.gid,
+        entry.members.len(),
+        entry.expire
+    )?;
     if !entry.members.is_empty() {
         writeln!(w, "              members: {}", entry.members.join(", "))?;
     }
     Ok(())
 }
 
-pub fn write_initgr(w: &mut impl Write, slot: u32, entry: &InitgrEntry, now: u64) -> std::io::Result<()> {
+pub fn write_initgr(
+    w: &mut impl Write, slot: u32, entry: &InitgrEntry, now: u64,
+) -> std::io::Result<()> {
     let tag = expired_tag(entry.expire, now);
-    writeln!(w, "  [slot {slot:>5}] {} num_groups={} expire={}{tag}",
-             entry.name, entry.gids.len(), entry.expire)?;
+    writeln!(
+        w,
+        "  [slot {slot:>5}] {} num_groups={} expire={}{tag}",
+        entry.name,
+        entry.gids.len(),
+        entry.expire
+    )?;
     if !entry.gids.is_empty() {
-        let gid_strs: Vec<String> = entry.gids.iter().map(|g| g.to_string()).collect();
+        let gid_strs: Vec<String> = entry.gids.iter().map(ToString::to_string).collect();
         writeln!(w, "              gids: {}", gid_strs.join(", "))?;
     }
     Ok(())
@@ -121,11 +170,16 @@ pub fn write_initgr(w: &mut impl Write, slot: u32, entry: &InitgrEntry, now: u64
 
 pub fn write_sid(w: &mut impl Write, slot: u32, entry: &SidEntry, now: u64) -> std::io::Result<()> {
     let tag = expired_tag(entry.expire, now);
-    writeln!(w, "  [slot {slot:>5}] {} id={} type={} populated_by={} expire={}{tag}",
-             entry.sid, entry.id, entry.id_type, entry.populated_by, entry.expire)
+    writeln!(
+        w,
+        "  [slot {slot:>5}] {} id={} type={} populated_by={} expire={}{tag}",
+        entry.sid, entry.id, entry.id_type, entry.populated_by, entry.expire
+    )
 }
 
-pub fn write_stats(w: &mut impl Write, cache: &CacheFile, now: u64, system_now: u64, now_is_file_mtime: bool) -> std::io::Result<()> {
+pub fn write_stats(
+    w: &mut impl Write, cache: &CacheFile, now: u64, system_now: u64, now_is_file_mtime: bool,
+) -> std::io::Result<()> {
     let mut total = 0u32;
     let mut expired = 0u32;
     let mut active = 0u32;
@@ -142,15 +196,15 @@ pub fn write_stats(w: &mut impl Write, cache: &CacheFile, now: u64, system_now: 
     let ht_entries = cache.ht_entries();
     let mut used_buckets = 0u32;
     for i in 0..ht_entries {
-        if let Ok(slot) = cache.ht_entry(i) {
-            if slot != MC_INVALID_VAL32 {
-                used_buckets += 1;
-            }
+        if let Ok(slot) = cache.ht_entry(i)
+            && slot != MC_INVALID_VAL32
+        {
+            used_buckets += 1;
         }
     }
 
     let load = if ht_entries > 0 {
-        used_buckets as f64 / ht_entries as f64 * 100.0
+        f64::from(used_buckets) / f64::from(ht_entries) * 100.0
     } else {
         0.0
     };
@@ -161,7 +215,10 @@ pub fn write_stats(w: &mut impl Write, cache: &CacheFile, now: u64, system_now: 
     writeln!(w, "Active records:   {active}")?;
     writeln!(w, "Expired records:  {expired}")?;
     writeln!(w, "Total slots:      {}", cache.total_slots())?;
-    writeln!(w, "Hash buckets:     {ht_entries} ({used_buckets} used, {load:.1}% load)")
+    writeln!(
+        w,
+        "Hash buckets:     {ht_entries} ({used_buckets} used, {load:.1}% load)"
+    )
 }
 
 #[cfg(test)]
@@ -170,8 +227,8 @@ mod tests {
 
     #[test]
     fn format_epoch_known_date() {
-        // 2026-03-25 00:00:00 UTC = 1774396800
-        let s = format_epoch(1774396800);
+        // 2026-03-25 00:00:00 UTC = 1_774_396_800
+        let s = format_epoch(1_774_396_800);
         assert!(s.starts_with("2026-03-25"), "got: {s}");
     }
 
