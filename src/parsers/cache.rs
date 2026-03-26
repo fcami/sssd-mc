@@ -136,8 +136,10 @@ impl CacheFile {
         }
 
         let bytes = &dt[offset..offset + rec_size];
-        // SAFETY: McRec is repr(C) and we have enough bytes.
-        let rec: McRec = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast()) };
+        let rec = McRec::from_bytes(bytes).ok_or(McError::OutOfBounds {
+            offset,
+            size: dt.len(),
+        })?;
         Ok(rec)
     }
 
@@ -308,9 +310,7 @@ impl Iterator for RecordIterator<'_> {
 // --- Internal helpers ---
 
 fn read_header(data: &[u8]) -> McHeader {
-    let bytes = &data[..size_of::<McHeader>()];
-    // SAFETY: McHeader is repr(C) and we checked length above.
-    unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast()) }
+    McHeader::from_bytes(data).expect("data too small for McHeader")
 }
 
 fn validate_header(header: &McHeader, file_size: usize) -> McResult<()> {

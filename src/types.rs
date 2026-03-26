@@ -45,6 +45,30 @@ pub struct McHeader {
     pub b2: u32,
 }
 
+impl McHeader {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 52 {
+            return None;
+        }
+        Some(Self {
+            b1: u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+            major_vno: u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+            minor_vno: u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+            status: u32::from_ne_bytes(bytes[12..16].try_into().ok()?),
+            seed: u32::from_ne_bytes(bytes[16..20].try_into().ok()?),
+            dt_size: u32::from_ne_bytes(bytes[20..24].try_into().ok()?),
+            ft_size: u32::from_ne_bytes(bytes[24..28].try_into().ok()?),
+            ht_size: u32::from_ne_bytes(bytes[28..32].try_into().ok()?),
+            data_table: u32::from_ne_bytes(bytes[32..36].try_into().ok()?),
+            free_table: u32::from_ne_bytes(bytes[36..40].try_into().ok()?),
+            hash_table: u32::from_ne_bytes(bytes[40..44].try_into().ok()?),
+            reserved: u32::from_ne_bytes(bytes[44..48].try_into().ok()?),
+            b2: u32::from_ne_bytes(bytes[48..52].try_into().ok()?),
+        })
+    }
+}
+
 // --- Record header ---
 
 /// Record header, at the start of each allocated record in the data table.
@@ -63,6 +87,26 @@ pub struct McRec {
     pub b2: u32,
 }
 
+impl McRec {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 40 {
+            return None;
+        }
+        Some(Self {
+            b1: u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+            len: u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+            expire: u64::from_ne_bytes(bytes[8..16].try_into().ok()?),
+            next1: u32::from_ne_bytes(bytes[16..20].try_into().ok()?),
+            next2: u32::from_ne_bytes(bytes[20..24].try_into().ok()?),
+            hash1: u32::from_ne_bytes(bytes[24..28].try_into().ok()?),
+            hash2: u32::from_ne_bytes(bytes[28..32].try_into().ok()?),
+            padding: u32::from_ne_bytes(bytes[32..36].try_into().ok()?),
+            b2: u32::from_ne_bytes(bytes[36..40].try_into().ok()?),
+        })
+    }
+}
+
 // --- Passwd data (follows McRec) ---
 
 /// Passwd record payload. Followed by `strs_len` bytes of null-terminated
@@ -76,6 +120,31 @@ pub struct McPwdData {
     pub strs_len: u32,
 }
 
+impl McPwdData {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 16 {
+            return None;
+        }
+        Some(Self {
+            name: u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+            uid: u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+            gid: u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+            strs_len: u32::from_ne_bytes(bytes[12..16].try_into().ok()?),
+        })
+    }
+
+    #[cfg(test)]
+    pub fn to_bytes(&self) -> [u8; 16] {
+        let mut bytes = [0u8; 16];
+        bytes[0..4].copy_from_slice(&self.name.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&self.uid.to_ne_bytes());
+        bytes[8..12].copy_from_slice(&self.gid.to_ne_bytes());
+        bytes[12..16].copy_from_slice(&self.strs_len.to_ne_bytes());
+        bytes
+    }
+}
+
 // --- Group data (follows McRec) ---
 
 /// Group record payload. Followed by `strs_len` bytes of null-terminated
@@ -87,6 +156,21 @@ pub struct McGrpData {
     pub gid: u32,
     pub members: u32,
     pub strs_len: u32,
+}
+
+impl McGrpData {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 16 {
+            return None;
+        }
+        Some(Self {
+            name: u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+            gid: u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+            members: u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+            strs_len: u32::from_ne_bytes(bytes[12..16].try_into().ok()?),
+        })
+    }
 }
 
 // --- Initgroups data (follows McRec) ---
@@ -104,6 +188,23 @@ pub struct McInitgrData {
     pub num_groups: u32,
 }
 
+impl McInitgrData {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 24 {
+            return None;
+        }
+        Some(Self {
+            unique_name: u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+            name: u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+            strs: u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+            strs_len: u32::from_ne_bytes(bytes[12..16].try_into().ok()?),
+            data_len: u32::from_ne_bytes(bytes[16..20].try_into().ok()?),
+            num_groups: u32::from_ne_bytes(bytes[20..24].try_into().ok()?),
+        })
+    }
+}
+
 // --- SID data (follows McRec) ---
 
 /// SID record payload. Followed by `sid_len` bytes of SID string.
@@ -115,6 +216,22 @@ pub struct McSidData {
     pub id: u32,
     pub populated_by: u32,
     pub sid_len: u32,
+}
+
+impl McSidData {
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 20 {
+            return None;
+        }
+        Some(Self {
+            name: u32::from_ne_bytes(bytes[0..4].try_into().ok()?),
+            id_type: u32::from_ne_bytes(bytes[4..8].try_into().ok()?),
+            id: u32::from_ne_bytes(bytes[8..12].try_into().ok()?),
+            populated_by: u32::from_ne_bytes(bytes[12..16].try_into().ok()?),
+            sid_len: u32::from_ne_bytes(bytes[16..20].try_into().ok()?),
+        })
+    }
 }
 
 // --- Cache type enum ---

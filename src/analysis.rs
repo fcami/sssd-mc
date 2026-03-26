@@ -335,7 +335,7 @@ pub fn verify_record_hashes(cache: &CacheFile, slot: u32, rec: &McRec) -> Option
             if data.len() < size_of::<McPwdData>() {
                 return None;
             }
-            let pwd: McPwdData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+            let pwd = McPwdData::from_bytes(data)?;
             let strs_start = size_of::<McPwdData>();
             let strs = &data[strs_start..];
             // Find name (first null-terminated string)
@@ -354,7 +354,7 @@ pub fn verify_record_hashes(cache: &CacheFile, slot: u32, rec: &McRec) -> Option
             if data.len() < size_of::<McGrpData>() {
                 return None;
             }
-            let grp: McGrpData = unsafe { std::ptr::read_unaligned(data.as_ptr().cast()) };
+            let grp = McGrpData::from_bytes(data)?;
             let strs_start = size_of::<McGrpData>();
             let strs = &data[strs_start..];
             let name_end = strs.iter().position(|&b| b == 0)?;
