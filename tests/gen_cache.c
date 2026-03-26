@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: gen_cache.c 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /*
  * gen_cache — Generate SSSD memory cache test fixtures.
  *

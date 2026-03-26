@@ -1,0 +1,8 @@
+(Apache-2.0 OR MIT) AND Unicode-3.0 (1): unicode-ident
+Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT (13): linux-raw-sys, rustix, wasip2, wasip3, wasm-encoder, wasm-metadata, wasmparser, wit-bindgen, wit-bindgen-core, wit-bindgen-rust, wit-bindgen-rust-macro, wit-component, wit-parser
+Apache-2.0 OR LGPL-2.1-or-later OR MIT (1): r-efi
+Apache-2.0 OR MIT (46): anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow, bitflags, cfg-if, clap, clap_builder, clap_derive, clap_lex, colorchoice, equivalent, errno, fastrand, getrandom, hashbrown, hashbrown, heck, id-arena, indexmap, is_terminal_polyfill, itoa, leb128fmt, libc, log, memmap2, once_cell, once_cell_polyfill, prettyplease, proc-macro2, quote, semver, serde, serde_core, serde_derive, serde_json, syn, tempfile, thiserror, thiserror-impl, unicode-xid, utf8parse, windows-link, windows-sys
+GPL-3.0-or-later (1): sssd-mc
+MIT (2): strsim, zmij
+MIT OR Unlicense (1): memchr
+Zlib (1): foldhash

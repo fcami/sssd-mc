@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: murmurhash3_crossval.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Cross-validation of our murmurhash3 against SSSD's C implementation.
 //!
 //! Reads reference hashes from tests/fixtures/<version>/hashes.txt
@@ -25,8 +29,12 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
 /// Parse hashes.txt and verify each entry against our implementation.
 fn verify_hashes(version: &str) {
     let path = fixtures_dir(version).join("hashes.txt");
-    let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {e}. Run `just gen-fixtures {version}` first.", path.display()));
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read {}: {e}. Run `just gen-fixtures {version}` first.",
+            path.display()
+        )
+    });
 
     let mut count = 0;
     for line in content.lines() {

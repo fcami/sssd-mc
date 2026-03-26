@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: ensure-builder-image.py 2026, ["François Cami" <contribs@fcami.net>]
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Ensure a UBI builder container image exists and is fresh (<90 days).
 
 Usage: ensure-builder-image.py <rhel-version>

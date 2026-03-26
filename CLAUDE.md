@@ -57,12 +57,12 @@
 
 The project provides 4 build modes:
 
-| Target | Command | Description |
-|--------|---------|-------------|
-| Local | `just build` | Build with local Rust toolchain |
-| RHEL 8 | `just release-rhel8` | Build in UBI8 container |
-| RHEL 9 | `just release-rhel9` | Build in UBI9 container |
-| RHEL 10 | `just release-rhel10` | Build in UBI10 container |
+| Target  | Command               | Description                     |
+| ------- | --------------------- | ------------------------------- |
+| Local   | `just build`          | Build with local Rust toolchain |
+| RHEL 8  | `just release-rhel8`  | Build in UBI8 container         |
+| RHEL 9  | `just release-rhel9`  | Build in UBI9 container         |
+| RHEL 10 | `just release-rhel10` | Build in UBI10 container        |
 
 Container builds use `scripts/ensure-builder-image.py` (shared pattern
 from sos-report-analyzer). Each UBI target uses the corresponding

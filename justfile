@@ -16,15 +16,15 @@ lint:
 
 # Run all tests (unit + integration, skip ignored)
 test:
-    cargo test
+    cargo nextest run
 
 # Run only unit tests
 unit:
-    cargo test --lib
+    cargo nextest run --lib
 
 # Run only integration tests
 integration:
-    cargo test --test '*'
+    cargo nextest run --test '*'
 
 # Build release binary
 release:
@@ -34,22 +34,24 @@ release:
 
 # Build or refresh a UBI builder image for a given RHEL version
 _ensure-image ver:
-    python3 {{justfile_directory()}}/scripts/ensure-builder-image.py {{ver}}
+    python3 {{ justfile_directory() }}/scripts/ensure-builder-image.py {{ ver }}
 
 # Podman format string (just can't escape Go templates cleanly in shebang recipes)
+
+[private]
 _podman_fmt := '{{.Repository}}:{{.Tag}}'
 
 # Run a containerized release build for a given RHEL version
 _release-ubi ver: (_ensure-image ver)
     #!/usr/bin/env bash
     set -euo pipefail
-    image="sssd-mc-builder-rhel{{ver}}"
-    fmt='{{_podman_fmt}}'
+    image="sssd-mc-builder-rhel{{ ver }}"
+    fmt='{{ _podman_fmt }}'
     latest=$(podman images --format "$fmt" \
         | grep "^localhost/${image}:" \
         | sort -t: -k2 -r | head -1)
     echo "[build] Using $latest"
-    podman run --rm -v {{justfile_directory()}}:/src:Z "$latest" \
+    podman run --rm -v {{ justfile_directory() }}:/src:Z "$latest" \
         bash -c "cd /src && cargo build --release"
 
 # Build release binary for RHEL 8 using UBI8 container
@@ -81,22 +83,22 @@ unvendor:
 # Build the C test cache generator for a given SSSD version
 build-gen version="head":
     cc -Wall -Wextra -O2 \
-        -I {{justfile_directory()}}/tests/sssd-sources/{{version}} \
-        {{justfile_directory()}}/tests/gen_cache.c \
-        {{justfile_directory()}}/tests/sssd-sources/{{version}}/murmurhash3.c \
-        -o {{justfile_directory()}}/tests/gen_cache_{{version}}
+        -I {{ justfile_directory() }}/tests/sssd-sources/{{ version }} \
+        {{ justfile_directory() }}/tests/gen_cache.c \
+        {{ justfile_directory() }}/tests/sssd-sources/{{ version }}/murmurhash3.c \
+        -o {{ justfile_directory() }}/tests/gen_cache_{{ version }}
 
 # Generate test fixtures for a given SSSD version
 gen-fixtures version="head": (build-gen version)
-    {{justfile_directory()}}/tests/gen_cache_{{version}} \
-        {{justfile_directory()}}/tests/fixtures/{{version}}
-    @echo "[fixtures] Generated for SSSD {{version}}"
+    {{ justfile_directory() }}/tests/gen_cache_{{ version }} \
+        {{ justfile_directory() }}/tests/fixtures/{{ version }}
+    @echo "[fixtures] Generated for SSSD {{ version }}"
 
 # Generate fixtures for all known SSSD versions
 gen-all-fixtures:
     #!/usr/bin/env bash
     set -euo pipefail
-    for ver in {{justfile_directory()}}/tests/sssd-sources/*/; do
+    for ver in {{ justfile_directory() }}/tests/sssd-sources/*/; do
         ver=$(basename "$ver")
         echo "[fixtures] Building for SSSD $ver"
         just gen-fixtures "$ver"

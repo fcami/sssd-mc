@@ -117,6 +117,7 @@ sudo sssd-mc dump /var/lib/sss/mc/sid -t sid
 ```
 
 Example output for passwd:
+
 ```
 Records:
   [slot     0] admin uid=1000 gid=1000 expire=1742998800
@@ -126,6 +127,7 @@ Records:
 ```
 
 JSON output (one object per line, pipe to `jq`):
+
 ```sh
 sudo sssd-mc dump /var/lib/sss/mc/passwd -t passwd --json
 ```
@@ -179,6 +181,7 @@ sudo sssd-mc verify /var/lib/sss/mc/passwd -t passwd
 ```
 
 Clean cache:
+
 ```
 Cache type:         passwd
 Total records:      42
@@ -191,6 +194,7 @@ No problems found.
 ```
 
 Cache with corruption:
+
 ```
 Cache type:         passwd
 Total records:      42
@@ -337,12 +341,12 @@ tests/
 
 SSSD creates these memory cache files under `/var/lib/sss/mc/`:
 
-| File | Cache type | Contents |
-|------|-----------|----------|
-| `passwd` | `passwd` | User entries (name, uid, gid, gecos, homedir, shell) |
-| `group` | `group` | Group entries (name, gid, members) |
-| `initgroups` | `initgroups` | Initgroups data (user to group memberships) |
-| `sid` | `sid` | SID-to-ID mappings (AD/IPA trust environments) |
+| File         | Cache type   | Contents                                             |
+|--------------|--------------|------------------------------------------------------|
+| `passwd`     | `passwd`     | User entries (name, uid, gid, gecos, homedir, shell) |
+| `group`      | `group`      | Group entries (name, gid, members)                   |
+| `initgroups` | `initgroups` | Initgroups data (user to group memberships)          |
+| `sid`        | `sid`        | SID-to-ID mappings (AD/IPA trust environments)       |
 
 ## License
 

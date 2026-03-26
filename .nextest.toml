@@ -1,0 +1,31 @@
+# nextest configuration for sssd-mc
+
+[profile.default]
+tests = true
+
+# Filter settings
+fail-fast = false  # Continue running all tests even if some fail (recommended for CI)
+
+# Test execution
+threads = 1  # Match --test-threads from Cargo.toml if specified, or default to number of CPUs
+
+# Retry settings for flaky tests
+retry = { count = 0, delay_ms = 1000 }  # No retries by default
+
+# Timeout settings (in seconds)
+# These help catch hanging tests
+timeout = 60
+test_timeout = { count = 3, delay_ms = 500 }  # Test timeout in CI mode
+
+# Test output
+capture_output = true  # Capture test output for cleaner logs (default: true)
+
+# Filtering
+skip = []  # List of regex patterns to skip tests
+
+[profile.dev]
+inherit_from = "default"
+
+[profile.ci]
+inherit_from = "default"
+fail-fast = true  # Stop on first failure in CI

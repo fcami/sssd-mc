@@ -1,7 +1,11 @@
-//! MurmurHash3 (32-bit) implementation matching SSSD's murmurhash3().
+// SPDX-FileCopyrightText: murmurhash3.rs 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! `MurmurHash3` (32-bit) implementation matching SSSD's `murmurhash3()`.
 //!
 //! This is a direct port of the SSSD implementation, which itself is based
-//! on the public domain MurmurHash3 by Austin Appleby. The 32-bit variant
+//! on the public domain `MurmurHash3` by Austin Appleby. The 32-bit variant
 //! is used because SSSD needs identical hashes on both 32-bit and 64-bit
 //! architectures.
 //!
@@ -26,10 +30,11 @@ fn fmix(mut h: u32) -> u32 {
     h
 }
 
-/// Compute MurmurHash3 (32-bit) of `key` with the given `seed`.
+/// Compute `MurmurHash3` (32-bit) of `key` with the given `seed`.
 ///
 /// This produces identical output to SSSD's `murmurhash3()` function
 /// for the same inputs.
+#[must_use]
 pub fn murmurhash3(key: &[u8], seed: u32) -> u32 {
     let len = key.len();
     let nblocks = len / 4;

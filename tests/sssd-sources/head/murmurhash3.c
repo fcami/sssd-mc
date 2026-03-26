@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: murmurhash3.c 2026, ["François Cami" <contribs@fcami.net>]
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /* This file is based on the public domain MurmurHash3 from Austin Appleby:
  * http://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp
  *
