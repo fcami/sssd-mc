@@ -16,15 +16,15 @@ lint:
 
 # Run all tests (unit + integration, skip ignored)
 test:
-    cargo test
+    cargo nextest run
 
 # Run only unit tests
 unit:
-    cargo test --lib
+    cargo nextest run --lib
 
 # Run only integration tests
 integration:
-    cargo test --test '*'
+    cargo nextest run --test '*'
 
 # Build release binary
 release:
